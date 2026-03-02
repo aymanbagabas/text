@@ -79,6 +79,458 @@ func TestConformance(t *testing.T) {
 	t.Logf("%d tests passed, %d failed", pass, fail)
 }
 
+// TestMandatoryBreaks verifies mandatory line break rules (LB4, LB5).
+func TestMandatoryBreaks(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"BK", "a\x0Bb", []string{"a\x0B", "b"}},
+		{"CR_LF", "a\r\nb", []string{"a\r\n", "b"}},
+		{"CR_alone", "a\rb", []string{"a\r", "b"}},
+		{"LF_alone", "a\nb", []string{"a\n", "b"}},
+		{"NL", "a\u0085b", []string{"a\u0085", "b"}},
+		{"multiple_LF", "a\n\nb", []string{"a\n", "\n", "b"}},
+		{"CR_LF_no_split", "\r\n", []string{"\r\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSpaceHandling verifies LB7, LB14, LB18, and space-related chain rules.
+func TestSpaceHandling(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"SP_break", "a b", []string{"a ", "b"}},
+		{"multiple_SP", "a   b", []string{"a   ", "b"}},
+		{"ZW_break", "a\u200Bb", []string{"a\u200B", "b"}},
+		{"ZW_SP_break", "a\u200B b", []string{"a\u200B ", "b"}},
+		{"OP_SP_keep", "( a", []string{"( a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWordJoiner verifies LB11: × WJ, WJ ×.
+func TestWordJoiner(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"WJ_keeps", "a\u2060b", []string{"a\u2060b"}},
+		{"WJ_both_sides", "a\u2060 b", []string{"a\u2060 ", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGlue verifies LB12: GL × and LB12a: [^SP BA HY] × GL.
+func TestGlue(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"GL_keeps_right", "a\u00A0b", []string{"a\u00A0b"}},
+		{"SP_GL_breaks", " \u00A0b", []string{" ", "\u00A0b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClosePunctuation verifies LB13 and close punctuation behavior.
+func TestClosePunctuation(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"no_break_before_CL", "a)", []string{"a)"}},
+		{"no_break_before_EX", "a!", []string{"a!"}},
+		{"no_break_before_IS", "a.", []string{"a."}},
+		{"no_break_before_SY", "a/", []string{"a/"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestQuotation verifies LB19: × QU, QU × and LB15 QU SP* × OP.
+func TestQuotation(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"QU_keeps_both_sides", "a\"b", []string{"a\"b"}},
+		{"QU_SP_OP", "\" (a", []string{"\" (a"}},
+		{"PI_keeps", "a\u00ABb", []string{"a\u00ABb"}},
+		{"PF_keeps", "a\u00BBb", []string{"a\u00BBb"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNumericContext verifies tailored LB25.
+func TestNumericContext(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"simple_number", "123", []string{"123"}},
+		{"number_comma", "1,234", []string{"1,234"}},
+		{"number_period", "3.14", []string{"3.14"}},
+		{"prefix_number", "$123", []string{"$123"}},
+		{"number_postfix", "100%", []string{"100%"}},
+		{"prefix_op_number", "$-1", []string{"$-1"}},
+		{"num_close_postfix", "(1)%", []string{"(1)%"}},
+		{"chained_numeric", "(0,1)+(2,3)", []string{"(0,1)+(2,3)"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHangul verifies LB26/LB27.
+func TestHangul(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"LV_LV_break", "\uAC00\uAC00", []string{"\uAC00", "\uAC00"}},
+		{"LVT_LVT_break", "\uAC01\uAC01", []string{"\uAC01", "\uAC01"}},
+		{"JL_JV_keep", "\u1100\u1161", []string{"\u1100\u1161"}},
+		{"JV_JT_keep", "\u1161\u11A8", []string{"\u1161\u11A8"}},
+		{"hangul_break_AL", "\uAC00a", []string{"\uAC00", "a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRegionalIndicator verifies LB30a: RI × RI pairing.
+func TestRegionalIndicator(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"one_pair", "\U0001F1E9\U0001F1EA", []string{"\U0001F1E9\U0001F1EA"}},
+		{"two_pairs", "\U0001F1E9\U0001F1EA\U0001F1FA\U0001F1F8",
+			[]string{"\U0001F1E9\U0001F1EA", "\U0001F1FA\U0001F1F8"}},
+		{"three_RI", "\U0001F1E9\U0001F1EA\U0001F1FA",
+			[]string{"\U0001F1E9\U0001F1EA", "\U0001F1FA"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEmojiBase verifies LB30b: EB × EM.
+func TestEmojiBase(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"EB_EM", "\U0001F466\U0001F3FB", []string{"\U0001F466\U0001F3FB"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHebrewLetter verifies LB21a: HL (HY|BA) × and LB21b: SY × HL.
+func TestHebrewLetter(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"HL_HY_keep", "\u05D0-\u05D1", []string{"\u05D0-\u05D1"}},
+		{"SY_HL", "/\u05D0", []string{"/\u05D0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLB9Absorption verifies that Extend/ZWJ are absorbed (LB9).
+func TestLB9Absorption(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"AL_extend", "a\u0300b", []string{"a\u0300b"}},
+		{"AL_ZWJ", "a\u200Db", []string{"a\u200Db"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCJK verifies ideographic break opportunities (LB31 default break).
+func TestCJK(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"ID_breaks", "\u4E00\u4E8C\u4E09", []string{"\u4E00", "\u4E8C", "\u4E09"}},
+		{"ID_no_break_before_CL", "\u4E00)", []string{"\u4E00)"}},
+		{"AL_ID_break", "a\u4E00", []string{"a", "\u4E00"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestContingentBreak verifies LB20: ÷ CB, CB ÷.
+func TestContingentBreak(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"CB_break_both", "a\uFFFCb", []string{"a", "\uFFFC", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEdgeCases covers boundary conditions.
+func TestEdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"single_char", "a", []string{"a"}},
+		{"single_SP", " ", []string{" "}},
+		{"single_LF", "\n", []string{"\n"}},
+		{"only_spaces", "   ", []string{"   "}},
+		{"only_newlines", "\n\n\n", []string{"\n", "\n", "\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAPIConsistency verifies that Bytes/Text/Position are consistent.
+func TestAPIConsistency(t *testing.T) {
+	input := []byte("Hello, world!\nNew line.\r\n日本語テスト")
+	seg := NewSegmenter(input)
+	offset := 0
+	for seg.Next() {
+		b := seg.Bytes()
+		text := seg.Text()
+		start, end := seg.Position()
+
+		if string(b) != text {
+			t.Errorf("Bytes/Text mismatch at offset %d: %q vs %q", offset, b, text)
+		}
+		if start != offset {
+			t.Errorf("start=%d, expected %d", start, offset)
+		}
+		if end != offset+len(b) {
+			t.Errorf("end=%d, expected %d", end, offset+len(b))
+		}
+		if end-start != len(b) {
+			t.Errorf("position length %d != bytes length %d", end-start, len(b))
+		}
+		offset = end
+	}
+	if offset != len(input) {
+		t.Errorf("consumed %d bytes, expected %d", offset, len(input))
+	}
+}
+
+// TestCoverage ensures all input bytes are covered by segments (no gaps or overlaps).
+func TestCoverage(t *testing.T) {
+	inputs := []string{
+		"Hello, world!",
+		"日本語\nテスト",
+		"\r\n\r\n",
+		"$1,234.56%",
+		"👨‍👩‍👧‍👦🇩🇪",
+		"\u05D0-\u05D1 test",
+		"(a+b)×(c−d)",
+		"",
+	}
+	for _, s := range inputs {
+		data := []byte(s)
+		seg := NewSegmenter(data)
+		var total int
+		prev := 0
+		for seg.Next() {
+			start, end := seg.Position()
+			if start != prev {
+				t.Errorf("gap at %d–%d in %q", prev, start, s)
+			}
+			total += end - start
+			prev = end
+		}
+		if total != len(data) {
+			t.Errorf("total segment bytes %d != input length %d for %q", total, len(data), s)
+		}
+	}
+}
+
+// TestLB30 verifies LB30: (AL|HL|NU) × OP (non-EA), CP (non-EA) × (AL|HL|NU).
+func TestLB30(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"AL_OP", "a(b", []string{"a(b"}},
+		{"CP_AL", ")a", []string{")a"}},
+		{"NU_OP", "1(2", []string{"1(2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestB2 verifies LB17: B2 SP* × B2.
+func TestB2(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"B2_B2", "\u2014\u2014", []string{"\u2014\u2014"}},
+		{"B2_SP_B2", "\u2014 \u2014", []string{"\u2014 \u2014"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func segments(data []byte) []string {
+	var out []string
+	seg := NewSegmenter(data)
+	for seg.Next() {
+		out = append(out, seg.Text())
+	}
+	return out
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func parseTestLine(t *testing.T, lineNum int, line string) (input []byte, segments []string) {
 	t.Helper()
 
