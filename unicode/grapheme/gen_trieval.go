@@ -6,47 +6,43 @@
 
 package main
 
-// Property indices for grapheme cluster break.
+// Class is a bitflag type for grapheme cluster break properties.
+// Each base property occupies one bit. The zero value represents Other.
+type Class uint32
+
+// Base property bitflags for grapheme cluster break.
 //
-// Base properties 0–17 correspond to Grapheme_Cluster_Break values from
-// the Unicode Character Database, with InCB (Indic_Conjunct_Break) sub-properties
-// split out from Extend for rule GB9c. The gen.go generator assigns these
-// indices when building the property trie.
+// Each property occupies one bit in a Class value. The zero value
+// represents Other (GCB=Other, InCB=None) — the default property for
+// codepoints with no specific class.
 //
-// Combined states 18–21 are synthetic properties used by the state machine
-// to track multi-character lookahead contexts (GB11, GB12/13, GB9c).
-//
-// SOT and EOT are virtual properties for start-of-text and end-of-text.
+// Combined states (pRI_RI, pExtPict_Ext, etc.) are NOT bitflags — they
+// are uint8 indices assigned after flattening, used by the state machine
+// for multi-character lookahead.
 const (
-	pOther             uint8 = iota // GCB=Other (and InCB=None)
-	pCR                             // GCB=CR
-	pLF                             // GCB=LF
-	pControl                        // GCB=Control
-	pExtend                         // GCB=Extend (and InCB=None)
-	pZWJ                            // GCB=ZWJ (U+200D)
-	pRegionalIndicator              // GCB=Regional_Indicator
-	pPrepend                        // GCB=Prepend
-	pSpacingMark                    // GCB=SpacingMark
-	pL                              // GCB=L (Hangul leading jamo)
-	pV                              // GCB=V (Hangul vowel jamo)
-	pT                              // GCB=T (Hangul trailing jamo)
-	pLV                             // GCB=LV (Hangul LV syllable)
-	pLVT                            // GCB=LVT (Hangul LVT syllable)
-	pExtPict                        // Extended_Pictographic=Yes
-	pInCBLinker                     // InCB=Linker (subset of GCB=Extend; viramas)
-	pInCBConsonant                  // InCB=Consonant (subset of GCB=Other; Indic consonants)
-	pInCBExtend                     // InCB=Extend (subset of GCB=Extend; combining marks near Indic clusters)
+	Other Class = 0 // GCB=Other (and InCB=None) — zero value, no bits set
 
-	// Combined states for multi-character lookahead.
-	pRI_RI       // after RI × RI (GB12/13: pair consumed)
-	pExtPict_Ext // after ExtPict × Extend* (GB11: accumulating extends)
-	pExtPict_ZWJ // after ExtPict × Extend* × ZWJ (GB11: ready for next ExtPict)
-	pInCB_Linker // after Consonant × [Extend|Linker]* × Linker (GB9c)
-
-	// Virtual properties.
-	pSOT      // start of text
-	pEOT      // end of text
-	propCount // total number of properties (= stride)
+	CR            Class = 1 << iota // GCB=CR
+	LF                              // GCB=LF
+	Control                         // GCB=Control
+	Extend                          // GCB=Extend (and InCB=None)
+	ZWJ                             // GCB=ZWJ (U+200D)
+	RI                              // GCB=Regional_Indicator
+	Prepend                         // GCB=Prepend
+	SpacingMark                     // GCB=SpacingMark
+	L                               // GCB=L (Hangul leading jamo)
+	V                               // GCB=V (Hangul vowel jamo)
+	T                               // GCB=T (Hangul trailing jamo)
+	LV                              // GCB=LV (Hangul LV syllable)
+	LVT                             // GCB=LVT (Hangul LVT syllable)
+	ExtPict                         // Extended_Pictographic=Yes
+	InCBLinker                      // InCB=Linker (subset of GCB=Extend; viramas)
+	InCBConsonant                   // InCB=Consonant (subset of GCB=Other; Indic consonants)
+	InCBExtend                      // InCB=Extend (subset of GCB=Extend; combining marks near Indic clusters)
 )
 
-const lastCodepointProperty = pInCB_Linker
+// allBaseProperties is the OR of all base property bits.
+// Used by the flattener to register all base properties.
+const allBaseProperties = CR | LF | Control | Extend | ZWJ | RI | Prepend |
+	SpacingMark | L | V | T | LV | LVT | ExtPict |
+	InCBLinker | InCBConsonant | InCBExtend
