@@ -11,8 +11,12 @@
 // The table is an N×N matrix (left-property × right-property → action),
 // where actions are break, keep, no-match (rewind), or enter-combined-state.
 //
-// Combined states encode multi-character lookahead rules (e.g. RI×RI pairing,
-// ExtPict×Extend*×ZWJ×ExtPict) without backtracking.
+// Combined states come in two flavours:
+//   - Index states (the default) enter a combined state. Marker movement
+//     is controlled by [RuleData.LastCodepointProperty]: the marker only
+//     advances when the previous state index ≤ LastCodepointProperty.
+//   - Intermediate states (bit 0x40 set) always advance the rewind point,
+//     regardless of LastCodepointProperty. Used for LB15b in line break.
 package segmenter
 
 // BreakState represents a cell in the break state table.
@@ -26,9 +30,33 @@ const (
 	// NoMatch signals that a combined state did not match; break at the
 	// saved marker position (rewind).
 	NoMatch BreakState = -1
-	// Values ≥ 0 are combined-state indices: enter that state as the new left
-	// property and advance right without breaking.
+
+	// Values 0–63 are Index combined states.
+	// Values 64–127 are Intermediate combined states (LB15b only).
+	// Use [StateIndex] to extract the property index and [IsIntermediate]
+	// to check the flavour.
+
+	intermediateBit BreakState = 0x40
 )
+
+// IsIntermediate reports whether state is an Intermediate combined state.
+func (s BreakState) IsIntermediate() bool {
+	return s >= 0 && s&intermediateBit != 0
+}
+
+// StateIndex extracts the combined-state property index from a combined
+// BreakState (either Index or Intermediate). The caller must ensure s >= 0.
+func (s BreakState) StateIndex() uint8 {
+	return uint8(s &^ intermediateBit)
+}
+
+// IndexState returns the BreakState encoding for an Index combined
+// state with the given property index.
+func IndexState(prop uint8) BreakState { return BreakState(prop) }
+
+// IntermediateState returns the BreakState encoding for an Intermediate
+// combined state with the given property index. Used for LB15b.
+func IntermediateState(prop uint8) BreakState { return BreakState(prop) | intermediateBit }
 
 // PropertyTable abstracts the trie lookup for codepoint → property index.
 type PropertyTable interface {
@@ -49,7 +77,21 @@ type RuleData struct {
 	BreakTable []BreakState
 	Stride     int // number of columns (= total property count)
 
-	PropCount   uint8 // number of base properties (before combined states)
+	PropCount uint8 // number of base properties (before combined states)
+
+	// LastCodepointProperty is the highest index that counts as a
+	// "codepoint property" for marker movement purposes. Indices
+	// 0..LastCodepointProperty are base properties + absorption combined
+	// states. Indices above are lookahead combined states.
+	//
+	// When entering a combined state via Index encoding, the walker
+	// moves the marker only if the PREVIOUS left property index was
+	// ≤ LastCodepointProperty. This means absorption states (which map
+	// back to base indices or _ZWJ indices, all ≤ LastCodepointProperty)
+	// advance the marker, while lookahead states (> LastCodepointProperty)
+	// do not.
+	LastCodepointProperty uint8
+
 	SOT         uint8 // start-of-text property index
 	EOT         uint8 // end-of-text property index
 	ComplexProp uint8 // SA property index (for dictionary delegation), 0 if none
@@ -118,7 +160,7 @@ func (s *Segmenter) Next() bool {
 			leftProp = rightProp
 		default:
 			if state >= 0 {
-				leftProp = uint8(state)
+				leftProp = state.StateIndex()
 			} else {
 				leftProp = rightProp
 			}
@@ -130,7 +172,6 @@ func (s *Segmenter) Next() bool {
 	}
 
 	marker := s.pos
-	inCombined := false
 
 	for s.pos < len(s.input) {
 		rightProp, size := s.lookup(s.input[s.pos:])
@@ -146,7 +187,6 @@ func (s *Segmenter) Next() bool {
 		case Keep:
 			leftProp = rightProp
 			s.pos += size
-			inCombined = false
 			marker = s.pos
 
 		case NoMatch:
@@ -158,11 +198,18 @@ func (s *Segmenter) Next() bool {
 			return true
 
 		default: // state >= 0: enter combined state
-			if !inCombined {
-				marker = s.pos
-				inCombined = true
+			idx := state.StateIndex()
+			if state.IsIntermediate() {
+				// Intermediate (LB15b): rewind point ALWAYS advances.
+				marker = s.pos + size
+			} else {
+				// Index: marker moves only when previous state is a
+				// codepoint property (base prop or absorption).
+				if leftProp <= s.data.LastCodepointProperty {
+					marker = s.pos
+				}
 			}
-			leftProp = uint8(state)
+			leftProp = idx
 			s.pos += size
 		}
 	}

@@ -42,16 +42,6 @@ func segments(seg *Segmenter) []string {
 	return out
 }
 
-// breaks collects all break positions (end offsets) from a Segmenter.
-func breaks(seg *Segmenter) []int {
-	var out []int
-	for seg.Next() {
-		_, end := seg.Position()
-		out = append(out, end)
-	}
-	return out
-}
-
 func TestBuildStateTable(t *testing.T) {
 	rules := []Rule{
 		{Left: []uint8{propA}, Right: []uint8{propA}, Break: false},
@@ -95,12 +85,13 @@ func TestSimpleBreaks(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
 	tests := []struct {
@@ -137,12 +128,13 @@ func TestBytesAndPosition(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
 	seg := New(data, []byte("AB"))
@@ -181,12 +173,13 @@ func TestWildcardRules(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
 	seg := New(data, []byte("AABA"))
@@ -197,15 +190,19 @@ func TestWildcardRules(t *testing.T) {
 	}
 }
 
-// Combined state test: model RI×RI pairing.
+// TestCombinedStateRI models RI×RI pairing (GB12/13, WB15/16).
+// pRI_RI is an absorption combined state (≤ LastCodepointProperty), so the
+// marker advances past the paired RI. The third RI sees pRI_RI on the left
+// and breaks.
 func TestCombinedStateRI(t *testing.T) {
 	const (
 		pRI    uint8 = 0
 		pOther uint8 = 1
-		pSOT   uint8 = 2
-		pEOT   uint8 = 3
-		pRI_RI uint8 = 4
+		pRI_RI uint8 = 2 // absorption: ≤ lastCP
+		pSOT   uint8 = 3
+		pEOT   uint8 = 4
 		stride       = 5
+		lastCP       = pRI_RI
 	)
 
 	lookup := funcTable(func(b []byte) (uint8, int) {
@@ -226,12 +223,13 @@ func TestCombinedStateRI(t *testing.T) {
 	}
 	table := BuildStateTable(rules, combined, stride)
 	data := &RuleData{
-		Properties: lookup,
-		BreakTable: table,
-		Stride:     stride,
-		PropCount:  2,
-		SOT:        pSOT,
-		EOT:        pEOT,
+		Properties:            lookup,
+		BreakTable:            table,
+		Stride:                stride,
+		PropCount:             2,
+		LastCodepointProperty: lastCP,
+		SOT:                   pSOT,
+		EOT:                   pEOT,
 	}
 
 	tests := []struct {
@@ -256,16 +254,19 @@ func TestCombinedStateRI(t *testing.T) {
 	}
 }
 
-// Combined state with NoMatch: model WB6/WB7 (AHLetter × MidLetter × AHLetter).
+// TestCombinedStateNoMatch models WB6/WB7 lookahead.
+// pAH_Mid is a lookahead state (> LastCodepointProperty), so the marker
+// does NOT advance past the MidLetter. On NoMatch, the segmenter rewinds.
 func TestCombinedStateNoMatch(t *testing.T) {
 	const (
 		pAH     uint8 = 0
 		pMid    uint8 = 1
 		pOther  uint8 = 2
-		pSOT    uint8 = 3
-		pEOT    uint8 = 4
-		pAH_Mid uint8 = 5
+		pAH_Mid uint8 = 3 // lookahead: > lastCP
+		pSOT    uint8 = 4
+		pEOT    uint8 = 5
 		stride        = 6
+		lastCP        = pOther
 	)
 
 	lookup := funcTable(func(b []byte) (uint8, int) {
@@ -292,7 +293,6 @@ func TestCombinedStateNoMatch(t *testing.T) {
 
 	table := BuildStateTable(rules, combined, stride)
 
-	// Override AH_Mid × non-AH to NoMatch (rewind) instead of Break.
 	for right := range stride {
 		if uint8(right) != pAH {
 			table[int(pAH_Mid)*stride+right] = NoMatch
@@ -300,12 +300,13 @@ func TestCombinedStateNoMatch(t *testing.T) {
 	}
 
 	data := &RuleData{
-		Properties: lookup,
-		BreakTable: table,
-		Stride:     stride,
-		PropCount:  3,
-		SOT:        pSOT,
-		EOT:        pEOT,
+		Properties:            lookup,
+		BreakTable:            table,
+		Stride:                stride,
+		PropCount:             3,
+		LastCodepointProperty: lastCP,
+		SOT:                   pSOT,
+		EOT:                   pEOT,
 	}
 
 	tests := []struct {
@@ -329,16 +330,107 @@ func TestCombinedStateNoMatch(t *testing.T) {
 	}
 }
 
+// TestAbsorptionAndLookahead models WB4 absorption + WB6/7 lookahead.
+// AH absorbs Ext via a combined state that maps back to pAH (index ≤ lastCP),
+// so the marker advances past absorbed characters. Then AH × Mid enters
+// lookahead pAH_Mid (index > lastCP), so the marker stays. On NoMatch,
+// rewind lands after the last absorption, not before.
+func TestAbsorptionAndLookahead(t *testing.T) {
+	const (
+		pAH     uint8 = 0
+		pExt    uint8 = 1
+		pMid    uint8 = 2
+		pOther  uint8 = 3
+		pSOT    uint8 = 4
+		pEOT    uint8 = 5
+		pAH_Mid uint8 = 6 // lookahead: > lastCP
+		stride        = 7
+		lastCP        = pOther // 0..3 are codepoint properties; pAH absorption maps back to pAH (0)
+	)
+
+	lookup := funcTable(func(b []byte) (uint8, int) {
+		switch b[0] {
+		case 'a':
+			return pAH, 1
+		case 'e':
+			return pExt, 1
+		case '.':
+			return pMid, 1
+		default:
+			return pOther, 1
+		}
+	})
+
+	rules := []Rule{
+		{Left: []uint8{pSOT}, Right: nil, Break: false},
+		{Left: []uint8{pAH}, Right: []uint8{pAH}, Break: false},               // WB5
+		{Left: []uint8{pAH_Mid}, Right: []uint8{pAH}, Break: false},           // WB7
+		{Left: nil, Right: []uint8{pExt}, Break: false},                        // WB4
+		{Left: nil, Right: nil, Break: true},                                   // WB999
+	}
+	combined := []CombinedState{
+		// WB4: AH × Ext → AH (absorption, maps back to base pAH ≤ lastCP)
+		{Left: pAH, Right: pExt, State: pAH},
+		// WB6: AH × Mid → AH_Mid (lookahead, > lastCP)
+		{Left: pAH, Right: pMid, State: pAH_Mid},
+	}
+
+	table := BuildStateTable(rules, combined, stride)
+
+	for right := range stride {
+		if table[int(pAH_Mid)*stride+right] == Break {
+			table[int(pAH_Mid)*stride+right] = NoMatch
+		}
+	}
+
+	data := &RuleData{
+		Properties:            lookup,
+		BreakTable:            table,
+		Stride:                stride,
+		PropCount:             4,
+		LastCodepointProperty: lastCP,
+		SOT:                   pSOT,
+		EOT:                   pEOT,
+	}
+
+	tests := []struct {
+		input string
+		segs  []string
+	}{
+		{"a.a", []string{"a.a"}},            // WB7: AH Mid AH
+		{"a.x", []string{"a", ".", "x"}},    // WB7 fail: AH Mid Other → rewind
+		{"ae.a", []string{"ae.a"}},           // WB4+WB7: AH Ext Mid AH
+		{"ae.x", []string{"ae", ".", "x"}},   // WB4+WB7 fail: rewind to after Ext
+		{"aee.a", []string{"aee.a"}},         // WB4+WB7: AH Ext Ext Mid AH
+		{"aee.x", []string{"aee", ".", "x"}}, // rewind to after absorbed Ext
+		{"ae", []string{"ae"}},               // WB4 absorption only
+		{"aea", []string{"aea"}},             // WB4 + WB5
+		{"a.", []string{"a", "."}},           // WB7 fail at EOT
+		{"ae.", []string{"ae", "."}},         // WB4 + WB7 fail at EOT
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.input), func(t *testing.T) {
+			seg := New(data, []byte(tt.input))
+			got := segments(seg)
+			if !stringsEqual(got, tt.segs) {
+				t.Errorf("got %q; want %q", got, tt.segs)
+			}
+		})
+	}
+}
+
 func TestEmptyInput(t *testing.T) {
 	rules := []Rule{{Left: nil, Right: nil, Break: true}}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 	seg := New(data, nil)
 	if seg.Next() {
@@ -356,12 +448,13 @@ func TestNextAfterExhausted(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 	seg := New(data, []byte("A"))
 	if !seg.Next() {
@@ -386,12 +479,13 @@ func TestRulePriority(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: funcTable(lookupAB),
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            funcTable(lookupAB),
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
 	seg := New(data, []byte("AB"))
@@ -426,18 +520,18 @@ func TestMultiByteRunes(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: lookup,
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            lookup,
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
 	input := "aé" // 'a' (1 byte) + 'é' (2 bytes U+00E9)
 	seg := New(data, []byte(input))
 	got := segments(seg)
-	// a=propA, é=propB → A÷B at byte 1, then B→EOT at byte 3.
 	want := []string{"a", "é"}
 	if !stringsEqual(got, want) {
 		t.Errorf("got %q; want %q", got, want)
@@ -445,8 +539,6 @@ func TestMultiByteRunes(t *testing.T) {
 }
 
 func TestOverrideTable(t *testing.T) {
-	// Base: all bytes map to propA.
-	// Override: 'B' maps to propB, everything else returns 0 (no override).
 	base := funcTable(func(b []byte) (uint8, int) {
 		return propA, 1
 	})
@@ -454,7 +546,7 @@ func TestOverrideTable(t *testing.T) {
 		if b[0] == 'B' {
 			return propB, 1
 		}
-		return 0, 1 // 0 = not overridden
+		return 0, 1
 	})
 
 	rules := []Rule{
@@ -464,17 +556,16 @@ func TestOverrideTable(t *testing.T) {
 	}
 	table := BuildStateTable(rules, nil, tStride)
 	data := &RuleData{
-		Properties: base,
-		Override:   override,
-		BreakTable: table,
-		Stride:     tStride,
-		PropCount:  2,
-		SOT:        propSOT,
-		EOT:        propEOT,
+		Properties:            base,
+		Override:              override,
+		BreakTable:            table,
+		Stride:                tStride,
+		PropCount:             2,
+		LastCodepointProperty: propB,
+		SOT:                   propSOT,
+		EOT:                   propEOT,
 	}
 
-	// Without override, "AABA" would be all propA → one segment.
-	// With override, B becomes propB → "AA|B|A".
 	seg := New(data, []byte("AABA"))
 	got := segments(seg)
 	want := []string{"AA", "B", "A"}
@@ -482,7 +573,6 @@ func TestOverrideTable(t *testing.T) {
 		t.Errorf("got %q; want %q", got, want)
 	}
 
-	// Without override: all propA → single segment.
 	data.Override = nil
 	seg = New(data, []byte("AABA"))
 	got = segments(seg)

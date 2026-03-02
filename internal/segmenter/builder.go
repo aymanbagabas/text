@@ -17,25 +17,37 @@ type Rule struct {
 // the segmenter enters State as the new left property instead of applying
 // the rule table directly.
 type CombinedState struct {
-	Left  uint8
-	Right uint8
-	State uint8
+	Left   uint8
+	Right  uint8
+	State  uint8
+	Interm bool // if true, emit MakeIntermediate instead of MakeIndex (LB15b only)
 }
 
 // BuildStateTable compiles rules and combined states into a flat N×N
-// break state table. The stride is the total property count (base +
-// combined + SOT + EOT). Rules are applied in order; the first match wins.
-// Combined states overlay the rule results with combined-state indices.
+// break state table in row-major order.
+//
+// Rules are applied in priority order; the first match wins.
+// Combined states overlay the rule results.
+//
+// Combined states with Interm=false are emitted as [IndexState].
+// Combined states with Interm=true are emitted as [IntermediateState].
+//
+// Marker movement is controlled at runtime by [RuleData.LastCodepointProperty],
+// not by Index vs Intermediate. The caller must order combined state indices:
+//   - Absorption states have indices ≤ LastCodepointProperty
+//   - Lookahead states have indices > LastCodepointProperty
+//
+// Intermediate vs Index controls what happens on NoMatch:
+//   - Index: rewind to the marker (standard lookahead)
+//   - Intermediate: rewind point always advances (LB15b semantics)
 func BuildStateTable(rules []Rule, combined []CombinedState, stride int) []BreakState {
 	n := stride
 	table := make([]BreakState, n*n)
 
-	// Initialize all cells to Break (default: GB999 / WB999 / etc.).
 	for i := range table {
 		table[i] = Break
 	}
 
-	// Apply rules in reverse priority order so that earlier rules overwrite later ones.
 	for i := len(rules) - 1; i >= 0; i-- {
 		r := &rules[i]
 		lefts := r.Left
@@ -59,10 +71,12 @@ func BuildStateTable(rules []Rule, combined []CombinedState, stride int) []Break
 		}
 	}
 
-	// Apply combined state transitions. These override the rule-derived
-	// value with a combined-state index (≥ 0).
 	for _, cs := range combined {
-		table[int(cs.Left)*n+int(cs.Right)] = BreakState(cs.State)
+		if cs.Interm {
+			table[int(cs.Left)*n+int(cs.Right)] = IntermediateState(cs.State)
+		} else {
+			table[int(cs.Left)*n+int(cs.Right)] = IndexState(cs.State)
+		}
 	}
 
 	return table
