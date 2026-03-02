@@ -1,0 +1,168 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//go:build ignore
+
+package main
+
+// Property indices for line break (UAX #14).
+//
+// Base properties 0–37 correspond to Line_Break property values from the
+// Unicode Character Database. Synthetic properties 38–43 combine Line_Break
+// class with East_Asian_Width or General_Category for rules that depend on
+// more than just the base class (LB30, LB15a/15b).
+//
+// LB9 absorption states (44–55) implement LB9/LB10: X (Extend|ZWJ)* → X.
+// These have indices ≤ lastCodepointProperty, so the engine advances the
+// marker past each absorbed character.
+//
+// Chain/lookahead states (56+) implement multi-character rules: LB8, LB14,
+// LB15b, LB16, LB17, LB21a, and LB30a. Rows for chain states default to
+// NoMatch so the engine rewinds on non-matching transitions.
+//
+// SOT and EOT are virtual properties for start-of-text and end-of-text.
+
+// Base Line_Break properties from UCD.
+const (
+	pXX  uint8 = iota // LB=XX (Unknown / default)
+	pBK               // LB=BK (Mandatory Break)
+	pCR               // LB=CR (Carriage Return)
+	pLF               // LB=LF (Line Feed)
+	pNL               // LB=NL (Next Line)
+	pSP               // LB=SP (Space)
+	pZW               // LB=ZW (Zero Width Space)
+	pWJ               // LB=WJ (Word Joiner)
+	pGL               // LB=GL (Non-breaking / Glue)
+	pCL               // LB=CL (Close Punctuation)
+	pEX               // LB=EX (Exclamation/Interrogation)
+	pIS               // LB=IS (Infix Numeric Separator)
+	pSY               // LB=SY (Symbols Allowing Break After)
+	pOP               // LB=OP (Open Punctuation, non-EA)
+	pQU               // LB=QU (Quotation, non-Pi/Pf)
+	pNS               // LB=NS (Nonstarter)
+	pHY               // LB=HY (Hyphen)
+	pBA               // LB=BA (Break After)
+	pBB               // LB=BB (Break Before)
+	pB2               // LB=B2 (Break Opportunity Before and After)
+	pIN               // LB=IN (Inseparable)
+	pAL               // LB=AL (Alphabetic, non-EA)
+	pNU               // LB=NU (Numeric)
+	pPR               // LB=PR (Prefix Numeric)
+	pPO               // LB=PO (Postfix Numeric)
+	pID               // LB=ID (Ideographic)
+	pEB               // LB=EB (Emoji Base)
+	pEM               // LB=EM (Emoji Modifier)
+	pCB               // LB=CB (Contingent Break)
+	pRI               // LB=RI (Regional Indicator)
+	pSA               // LB=SA (Complex Context / South Asian)
+	pHL               // LB=HL (Hebrew Letter)
+	pCJ               // LB=CJ (Conditional Japanese Starter)
+	pAK               // LB=AK (Aksara)
+	pAP               // LB=AP (Aksara Pre-base)
+	pAS               // LB=AS (Aksara Start)
+	pVF               // LB=VF (Virama Final)
+	pVI               // LB=VI (Virama)
+
+	// Hangul properties (LB26/LB27).
+	pJL // LB=JL (Hangul L Jamo)
+	pJV // LB=JV (Hangul V Jamo)
+	pJT // LB=JT (Hangul T Jamo)
+	pH2 // LB=H2 (Hangul LV Syllable)
+	pH3 // LB=H3 (Hangul LVT Syllable)
+
+	// Synthetic properties (LineBreak + EastAsianWidth/GeneralCategory).
+	pOP_EA // OP with ea=F/H/W (East Asian Open Punctuation)
+	pCP    // CP (Close Punctuation, non-EA)
+	pCP_EA // CP with ea=F/H/W (East Asian Close Punctuation)
+	pQU_PI // QU with gc=Pi (Initial Quotation)
+	pQU_PF // QU with gc=Pf (Final Quotation)
+
+	// LB9/LB10 transparent properties.
+	pExtend // Extend (GCB=Extend, absorbed by LB9)
+	pZWJ    // ZWJ (U+200D, absorbed by LB9)
+
+	lastBaseProperty = pZWJ
+)
+
+// LB9 absorption states: base property after absorbing Extend/ZWJ.
+// Indices ≤ lastCodepointProperty so the engine moves the marker.
+//
+// LB9 says: Do NOT apply to BK, CR, LF, NL, SP, ZW — those are excluded.
+// For all other bases, X (Extend|ZWJ)* → X_XX (absorb the combining marks).
+const (
+	pAL_XX uint8 = lastBaseProperty + 1 + iota
+	pHL_XX
+	pNU_XX
+	pID_XX
+	pEB_XX
+	pRI_XX
+	pOP_XX
+	pOP_EA_XX
+	pCP_XX
+	pCP_EA_XX
+	pCL_XX
+	pBA_XX
+	pHY_XX
+	pBB_XX
+	pB2_XX
+	pSY_XX
+	pIS_XX
+	pPR_XX
+	pPO_XX
+	pIN_XX
+	pGL_XX
+	pWJ_XX
+	pNS_XX
+	pEX_XX
+	pQU_XX
+	pQU_PI_XX
+	pQU_PF_XX
+	pCB_XX
+	pSA_XX
+	pCJ_XX
+	pAK_XX
+	pAP_XX
+	pAS_XX
+	pVF_XX
+	pVI_XX
+	pEM_XX
+	pJL_XX
+	pJV_XX
+	pJT_XX
+	pH2_XX
+	pH3_XX
+	pXX_XX
+
+	lastCodepointProperty = pXX_XX
+)
+
+// Chain/lookahead states and virtual properties.
+const (
+	pZW_SP uint8 = lastCodepointProperty + 1 + iota // LB8: ZW SP*
+
+	pOP_SP    // LB14: OP SP*
+	pOP_EA_SP // LB14: OP_EA SP*
+
+	pQU_PI_SP // LB15a: (primed) QU_PI SP*
+
+	pCL_SP    // LB16: CL/CP SP*
+	pCP_SP    // LB16: CP SP*
+	pCP_EA_SP // LB16: CP_EA SP*
+
+	pB2_SP // LB17: B2 SP*
+
+	pHL_HY // LB21a: HL (HY|BA)
+
+	pRI_RI // LB30a: RI × RI (paired)
+
+	pNU_Num      // LB25: NU (NU|SY|IS)* numeric body
+	pNU_Close_CL // LB25: NU ... CL (close from CL)
+	pNU_Close_CP // LB25: NU ... CP (close from CP, has LB30 keeps)
+	pNU_PR       // LB25: NU ... (PO|PR) chain for (PO|PR) × OP/HY/NU
+
+	// Virtual properties.
+	pSOT      // start of text
+	pEOT      // end of text
+	propCount // total number of properties (= stride)
+)
