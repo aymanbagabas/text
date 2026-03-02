@@ -1,0 +1,286 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//go:build ignore
+
+package main
+
+import "golang.org/x/text/internal/segmenter"
+
+// Property indices for word break.
+//
+// Base properties 0–19 correspond to Word_Break property values from the
+// Unicode Character Database, with the addition of Extended_Pictographic
+// (needed for WB3c). The gen.go generator assigns these indices when
+// building the property trie.
+//
+// Absorption states (20–28) are synthetic properties created by WB4
+// absorption (X × Extend/Format/ZWJ → X). The _ZWJ variants track that
+// ZWJ was the most recently absorbed character, needed for WB3c.
+// WSegSpace_XX tracks that WSegSpace absorbed Extend/Format and lost WB3d
+// eligibility. These have indices ≤ lastCodepointProperty, so the engine
+// advances the marker past each absorbed character.
+//
+// Lookahead states (29–33) implement multi-character rules: WB6/7, WB7b/7c,
+// WB11/12, and WB15/16. These have indices > lastCodepointProperty, so the
+// engine does NOT advance the marker on entry — NoMatch rewinds to where
+// the lookahead began.
+//
+// SOT and EOT are virtual properties for start-of-text and end-of-text.
+const (
+	// Base properties from UCD.
+	pOther             uint8 = iota // WB=Other
+	pCR                             // WB=CR
+	pLF                             // WB=LF
+	pNewline                        // WB=Newline
+	pExtend                         // WB=Extend
+	pZWJ                            // WB=ZWJ
+	pFormat                         // WB=Format
+	pRegionalIndicator              // WB=Regional_Indicator
+	pKatakana                       // WB=Katakana
+	pHebrewLetter                   // WB=Hebrew_Letter
+	pALetter                        // WB=ALetter
+	pSingleQuote                    // WB=Single_Quote
+	pDoubleQuote                    // WB=Double_Quote
+	pMidLetter                      // WB=MidLetter
+	pMidNum                         // WB=MidNum
+	pMidNumLet                      // WB=MidNumLet
+	pNumeric                        // WB=Numeric
+	pExtendNumLet                   // WB=ExtendNumLet
+	pExtPict                        // Extended_Pictographic=Yes
+	pWSegSpace                      // WB=WSegSpace
+
+	// Absorption states: base property after absorbing Extend/Format/ZWJ.
+	// Indices ≤ lastCodepointProperty, so the engine moves the marker.
+	pALetter_ZWJ      // ALetter + last absorbed was ZWJ
+	pHebrewLetter_ZWJ // HebrewLetter + last absorbed was ZWJ
+	pNumeric_ZWJ      // Numeric + last absorbed was ZWJ
+	pKatakana_ZWJ     // Katakana + last absorbed was ZWJ
+	pExtendNumLet_ZWJ // ExtendNumLet + last absorbed was ZWJ
+	pRI_ZWJ           // Regional_Indicator + last absorbed was ZWJ
+	pExtPict_ZWJ      // Extended_Pictographic + last absorbed was ZWJ
+	pWSegSpace_ZWJ    // WSegSpace + last absorbed was ZWJ
+	pWSegSpace_XX // WSegSpace after absorbing Extend/Format (loses WB3d)
+
+	// Lookahead states for multi-character rules.
+	// Indices > lastCodepointProperty, so the engine does NOT move the
+	// marker on entry — NoMatch rewinds to where the lookahead began.
+	pAHL_MidLetter // AHLetter × (MidLetter|MidNumLetQ) — awaiting AHLetter (WB6/7)
+	pHL_MidLetter  // HebrewLetter × (MidLetter|MidNumLetQ) — awaiting AHLetter (WB6/7)
+	pNum_MidNum    // Numeric × (MidNum|MidNumLetQ) — awaiting Numeric (WB11/12)
+	pHL_DQ         // HebrewLetter × Double_Quote — awaiting HebrewLetter (WB7b/7c)
+	pRI_RI         // RI × RI pair consumed (WB15/16)
+
+	// Virtual properties.
+	pSOT      // start of text
+	pEOT      // end of text
+	propCount // total number of properties (= stride)
+)
+
+const lastCodepointProperty = pWSegSpace_XX
+
+// lookaheadStates lists combined states whose rows default to NoMatch (rewind).
+var lookaheadStates = []uint8{pAHL_MidLetter, pHL_MidLetter, pNum_MidNum, pHL_DQ}
+
+// Rule macros from UAX #29 Table 3a.
+var (
+	AHLetter    = p(pALetter, pHebrewLetter, pALetter_ZWJ, pHebrewLetter_ZWJ)
+	MidNumLetQ  = p(pMidNumLet, pSingleQuote)
+)
+
+// rules encodes the UAX #29 word boundary rules (WB1–WB999) as input to
+// [segmenter.BuildStateTable]. Rules are listed in priority order; the
+// first match wins.
+//
+// References: https://www.unicode.org/reports/tr29/#Word_Boundary_Rules
+var rules = []segmenter.Rule{
+	// WB1: sot ÷ Any
+	{Left: p(pSOT), Right: nil, Break: false},
+
+	// WB2: Any ÷ eot
+	{Left: nil, Right: p(pEOT), Break: true},
+
+	// WB3: CR × LF
+	{Left: p(pCR), Right: p(pLF), Break: false},
+
+	// WB3a: (Newline | CR | LF) ÷
+	{Left: p(pNewline, pCR, pLF), Right: nil, Break: true},
+
+	// WB3b: ÷ (Newline | CR | LF)
+	{Left: nil, Right: p(pNewline, pCR, pLF), Break: true},
+
+	// WB3c: ZWJ × Extended_Pictographic
+	{Left: p(pZWJ,
+		pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
+		pKatakana_ZWJ, pExtendNumLet_ZWJ, pRI_ZWJ,
+		pExtPict_ZWJ, pWSegSpace_ZWJ,
+	), Right: p(pExtPict), Break: false},
+
+	// WB3d: WSegSpace × WSegSpace
+	{Left: p(pWSegSpace), Right: p(pWSegSpace), Break: false},
+
+	// WB4: X (Extend | Format | ZWJ)* → X
+	{Left: nil, Right: p(pExtend, pFormat, pZWJ), Break: false},
+
+	// WB5: AHLetter × AHLetter
+	{Left: AHLetter, Right: p(pALetter, pHebrewLetter), Break: false},
+
+	// WB7: AHLetter (MidLetter | MidNumLetQ) × AHLetter
+	{Left: p(pAHL_MidLetter, pHL_MidLetter),
+		Right: p(pALetter, pHebrewLetter), Break: false},
+
+	// WB7a: Hebrew_Letter × Single_Quote
+	{Left: p(pHebrewLetter, pHebrewLetter_ZWJ), Right: p(pSingleQuote), Break: false},
+
+	// WB7b/7c: Hebrew_Letter × Double_Quote × Hebrew_Letter
+	{Left: p(pHL_DQ), Right: p(pHebrewLetter), Break: false},
+
+	// WB8: Numeric × Numeric
+	{Left: p(pNumeric, pNumeric_ZWJ), Right: p(pNumeric), Break: false},
+
+	// WB9: AHLetter × Numeric
+	{Left: AHLetter, Right: p(pNumeric), Break: false},
+
+	// WB10: Numeric × AHLetter
+	{Left: p(pNumeric, pNumeric_ZWJ),
+		Right: p(pALetter, pHebrewLetter), Break: false},
+
+	// WB11: Numeric (MidNum | MidNumLetQ) × Numeric
+	{Left: p(pNum_MidNum), Right: p(pNumeric), Break: false},
+
+	// WB13: Katakana × Katakana
+	{Left: p(pKatakana, pKatakana_ZWJ), Right: p(pKatakana), Break: false},
+
+	// WB13a: (AHLetter | Numeric | Katakana | ExtendNumLet) × ExtendNumLet
+	{Left: p(pALetter, pHebrewLetter, pNumeric, pKatakana, pExtendNumLet,
+		pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
+		pKatakana_ZWJ, pExtendNumLet_ZWJ),
+		Right: p(pExtendNumLet), Break: false},
+
+	// WB13b: ExtendNumLet × (AHLetter | Numeric | Katakana)
+	{Left: p(pExtendNumLet, pExtendNumLet_ZWJ),
+		Right: p(pALetter, pHebrewLetter, pNumeric, pKatakana), Break: false},
+
+	// WB15/16: RI × RI (pair only; break before 3rd).
+	{Left: p(pRegionalIndicator, pRI_ZWJ), Right: p(pRegionalIndicator), Break: false},
+	{Left: p(pRI_RI), Right: p(pRegionalIndicator), Break: true},
+
+	// WB999: Any ÷ Any
+	{Left: nil, Right: nil, Break: true},
+}
+
+// combinedStates defines all state transitions for WB4 absorption and
+// lookahead rules (WB6/7, WB7b/7c, WB11/12, WB15/16).
+//
+// Absorption entries target indices ≤ lastCodepointProperty, so the engine
+// advances the marker past absorbed characters. Lookahead entries target
+// indices > lastCodepointProperty, so the marker stays — NoMatch rewinds.
+var combinedStates = func() []segmenter.CombinedState {
+	var cs []segmenter.CombinedState
+
+	type cs0 = segmenter.CombinedState
+
+	// absorb emits the 6 WB4 absorption entries for a base property:
+	//   Base     × Extend → extFmt    Base     × Format → extFmt
+	//   Base     × ZWJ    → zwj       Base_ZWJ × Extend → extFmt
+	//   Base_ZWJ × Format → extFmt    Base_ZWJ × ZWJ    → zwj
+	// For most properties extFmt == base (absorbing Extend/Format returns
+	// to the base). WSegSpace is the exception: extFmt == pWSegSpace_XX.
+	absorb := func(base, zwj, extFmt uint8) {
+		cs = append(cs,
+			cs0{Left: base, Right: pExtend, State: extFmt},
+			cs0{Left: base, Right: pFormat, State: extFmt},
+			cs0{Left: base, Right: pZWJ, State: zwj},
+			cs0{Left: zwj, Right: pExtend, State: extFmt},
+			cs0{Left: zwj, Right: pFormat, State: extFmt},
+			cs0{Left: zwj, Right: pZWJ, State: zwj},
+		)
+	}
+
+	// lookahead emits the cross-product of lefts × rights → state.
+	lookahead := func(lefts, rights []uint8, state uint8) {
+		for _, l := range lefts {
+			for _, r := range rights {
+				cs = append(cs, cs0{Left: l, Right: r, State: state})
+			}
+		}
+	}
+
+	// wb4Self emits Extend/Format/ZWJ self-transitions for a lookahead state.
+	wb4Self := func(state uint8) {
+		cs = append(cs,
+			cs0{Left: state, Right: pExtend, State: state},
+			cs0{Left: state, Right: pFormat, State: state},
+			cs0{Left: state, Right: pZWJ, State: state},
+		)
+	}
+
+	// ---------------------------------------------------------------
+	// WB4 absorption (targets ≤ lastCodepointProperty).
+	// ---------------------------------------------------------------
+	absorb(pALetter, pALetter_ZWJ, pALetter)
+	absorb(pHebrewLetter, pHebrewLetter_ZWJ, pHebrewLetter)
+	absorb(pNumeric, pNumeric_ZWJ, pNumeric)
+	absorb(pKatakana, pKatakana_ZWJ, pKatakana)
+	absorb(pExtendNumLet, pExtendNumLet_ZWJ, pExtendNumLet)
+	absorb(pRegionalIndicator, pRI_ZWJ, pRegionalIndicator)
+	absorb(pExtPict, pExtPict_ZWJ, pExtPict)
+	absorb(pWSegSpace, pWSegSpace_ZWJ, pWSegSpace_XX)
+
+	// WSegSpace_XX also absorbs (it already lost WB3d eligibility).
+	cs = append(cs,
+		cs0{Left: pWSegSpace_XX, Right: pExtend, State: pWSegSpace_XX},
+		cs0{Left: pWSegSpace_XX, Right: pFormat, State: pWSegSpace_XX},
+		cs0{Left: pWSegSpace_XX, Right: pZWJ, State: pWSegSpace_ZWJ},
+	)
+
+	// WB4 within lookahead states: Extend/Format/ZWJ are transparent.
+	// The marker stays at the lookahead entry point for correct NoMatch rewind.
+	wb4Self(pAHL_MidLetter)
+	wb4Self(pHL_MidLetter)
+	wb4Self(pNum_MidNum)
+	wb4Self(pHL_DQ)
+
+	// ---------------------------------------------------------------
+	// Lookahead (Interm: false, the default).
+	// ---------------------------------------------------------------
+
+	// WB6: AHLetter × (MidLetter | MidNumLetQ) → lookahead state.
+	// HebrewLetter × Single_Quote excluded (WB7a takes priority).
+	lookahead(
+		[]uint8{pALetter, pALetter_ZWJ},
+		append(p(pMidLetter), MidNumLetQ...),
+		pAHL_MidLetter,
+	)
+	lookahead(
+		[]uint8{pHebrewLetter, pHebrewLetter_ZWJ},
+		p(pMidLetter, pMidNumLet),
+		pHL_MidLetter,
+	)
+
+	// WB7b: HebrewLetter × Double_Quote → lookahead state.
+	lookahead(
+		[]uint8{pHebrewLetter, pHebrewLetter_ZWJ},
+		[]uint8{pDoubleQuote},
+		pHL_DQ,
+	)
+
+	// WB12: Numeric × (MidNum | MidNumLetQ) → lookahead state.
+	lookahead(
+		[]uint8{pNumeric, pNumeric_ZWJ},
+		append(p(pMidNum), MidNumLetQ...),
+		pNum_MidNum,
+	)
+
+	// WB15/16: RI × RI → pair consumed.
+	lookahead(
+		[]uint8{pRegionalIndicator, pRI_ZWJ},
+		[]uint8{pRegionalIndicator},
+		pRI_RI,
+	)
+
+	return cs
+}()
+
+func p(props ...uint8) []uint8 { return props }
