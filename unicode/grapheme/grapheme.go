@@ -28,11 +28,6 @@ var ruleData = &segmenter.RuleData{
 	LastCodepointProperty: lastCodepointProperty,
 	SOT:                   pSOT,
 	EOT:                   pEOT,
-
-	// This optimization is valid for grapheme clusters because all ASCII bytes
-	// are in the same property (Other) and have no special break rules except
-	// around CR/LF, which are handled by the break state table.
-	ASCIIBreak: true,
 }
 
 // Segmenter iterates over the grapheme clusters in a byte slice.
@@ -54,7 +49,24 @@ func NewSegmenter(input []byte) *Segmenter {
 
 // Next advances to the next grapheme cluster. It returns false when the
 // end of input has been reached.
-func (g *Segmenter) Next() bool { return g.s.Next() }
+func (g *Segmenter) Next() bool {
+	input := g.s.Input()
+	pos := g.s.End()
+	if pos < len(input) {
+		// ASCII fast path: every ASCII byte except CR/LF is its own
+		// grapheme cluster, so emit 1 byte directly when the next byte
+		// is also ASCII (or EOF). Non-ASCII followers may be Extend/ZWJ
+		// that attach to the preceding character.
+		b := input[pos]
+		if b < 0x80 && b != '\r' && b != '\n' {
+			if pos+1 >= len(input) || input[pos+1] < 0x80 {
+				g.s.FastForward(pos+1, 0)
+				return true
+			}
+		}
+	}
+	return g.s.Next()
+}
 
 // Bytes returns the current grapheme cluster as a byte slice.
 func (g *Segmenter) Bytes() []byte { return g.s.Bytes() }

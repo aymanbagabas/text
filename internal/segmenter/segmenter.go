@@ -95,8 +95,6 @@ type RuleData struct {
 	SOT         uint8 // start-of-text property index
 	EOT         uint8 // end-of-text property index
 	ComplexProp uint8 // SA property index (for dictionary delegation), 0 if none
-
-	ASCIIBreak bool // if true, an ASCII byte (except CR/LF) followed by ASCII or EOF is always a 1-byte segment
 }
 
 // ComplexHandler segments runs of complex-script text (SA property).
@@ -118,7 +116,7 @@ type Segmenter struct {
 	data  *RuleData
 	input []byte
 	start int // start of current segment
-	pos   int // end of current segment (updated by Next)
+	end   int // end of current segment (updated by Next)
 
 	boundaryProp uint8 // property of the left side at the break point
 }
@@ -133,29 +131,18 @@ func New(data *RuleData, input []byte) *Segmenter {
 // input has been reached. After Next returns true, [Bytes], [Text], and
 // [Position] describe the current segment.
 func (s *Segmenter) Next() bool {
-	if s.pos >= len(s.input) {
+	if s.end >= len(s.input) {
 		return false
 	}
 
-	s.start = s.pos
-
-	if s.data.ASCIIBreak {
-		b := s.input[s.pos]
-		if b < 0x80 && b != '\r' && b != '\n' {
-			if s.pos+1 >= len(s.input) || s.input[s.pos+1] < 0x80 {
-				s.boundaryProp = 0 // Reset to Other property for ASCII breaks.
-				s.pos++
-				return true
-			}
-		}
-	}
+	s.start = s.end
 
 	var leftProp uint8
-	if s.pos == 0 {
+	if s.end == 0 {
 		leftProp = s.data.SOT
-		rightProp, size := s.lookup(s.input[s.pos:])
+		rightProp, size := s.lookup(s.input[s.end:])
 		state := s.data.BreakTable[int(leftProp)*s.data.Stride+int(rightProp)]
-		s.pos += size
+		s.end += size
 		switch state {
 		case Break:
 			s.boundaryProp = leftProp
@@ -171,55 +158,55 @@ func (s *Segmenter) Next() bool {
 		}
 	} else {
 		var size int
-		leftProp, size = s.lookup(s.input[s.pos:])
-		s.pos += size
+		leftProp, size = s.lookup(s.input[s.end:])
+		s.end += size
 	}
 
-	marker := s.pos
+	marker := s.end
 	markerLeftProp := leftProp
 
-	for s.pos < len(s.input) {
-		rightProp, size := s.lookup(s.input[s.pos:])
+	for s.end < len(s.input) {
+		rightProp, size := s.lookup(s.input[s.end:])
 		state := s.data.BreakTable[int(leftProp)*s.data.Stride+int(rightProp)]
 
 		switch state {
 		case Break:
-			if s.pos == s.start {
-				s.pos += size
+			if s.end == s.start {
+				s.end += size
 			}
 			s.boundaryProp = leftProp
 			return true
 
 		case Keep:
 			leftProp = rightProp
-			s.pos += size
-			marker = s.pos
+			s.end += size
+			marker = s.end
 			markerLeftProp = rightProp
 
 		case NoMatch:
-			s.pos = marker
+			s.end = marker
 			s.boundaryProp = markerLeftProp
-			if s.pos == s.start {
-				_, sz := s.lookup(s.input[s.pos:])
-				s.pos += sz
+			if s.end == s.start {
+				_, sz := s.lookup(s.input[s.end:])
+				s.end += sz
 			}
 			return true
 
 		default: // state >= 0: enter combined state
 			idx := state.StateIndex()
 			if state.IsIntermediate() {
-				marker = s.pos + size
+				marker = s.end + size
 				if leftProp <= s.data.LastCodepointProperty {
 					markerLeftProp = idx
 				}
 			} else {
 				if leftProp <= s.data.LastCodepointProperty {
-					marker = s.pos
+					marker = s.end
 					markerLeftProp = idx
 				}
 			}
 			leftProp = idx
-			s.pos += size
+			s.end += size
 		}
 	}
 
@@ -227,9 +214,9 @@ func (s *Segmenter) Next() bool {
 	eotState := s.data.BreakTable[int(leftProp)*s.data.Stride+int(s.data.EOT)]
 	if eotState == NoMatch {
 		s.boundaryProp = markerLeftProp
-		s.pos = marker
-		if s.pos == s.start {
-			s.pos = len(s.input)
+		s.end = marker
+		if s.end == s.start {
+			s.end = len(s.input)
 		}
 	} else {
 		s.boundaryProp = leftProp
@@ -240,19 +227,19 @@ func (s *Segmenter) Next() bool {
 // Bytes returns the current segment as a byte slice.
 // It is only valid after [Next] returns true.
 func (s *Segmenter) Bytes() []byte {
-	return s.input[s.start:s.pos]
+	return s.input[s.start:s.end]
 }
 
 // Text returns the current segment as a string.
 // It is only valid after [Next] returns true.
 func (s *Segmenter) Text() string {
-	return string(s.input[s.start:s.pos])
+	return string(s.input[s.start:s.end])
 }
 
 // Position returns the byte offsets [start, end) of the current segment.
 // It is only valid after [Next] returns true.
 func (s *Segmenter) Position() (start, end int) {
-	return s.start, s.pos
+	return s.start, s.end
 }
 
 // BoundaryProperty returns the property index of the left side at the break
@@ -261,6 +248,22 @@ func (s *Segmenter) Position() (start, end int) {
 // generically; interpretation is up to the per-package segmenter.
 func (s *Segmenter) BoundaryProperty() uint8 {
 	return s.boundaryProp
+}
+
+// End returns the end position of the last segment (= start of the next).
+func (s *Segmenter) End() int { return s.end }
+
+// Input returns the input byte slice.
+func (s *Segmenter) Input() []byte { return s.input }
+
+// FastForward sets the current segment to [pos, end) with the given boundary
+// property, without running the state machine. Used by per-package fast paths
+// (e.g., word's ASCII fast path) that can determine the segment boundary
+// without Unicode property lookups.
+func (s *Segmenter) FastForward(end int, prop uint8) {
+	s.start = s.end
+	s.end = end
+	s.boundaryProp = prop
 }
 
 // lookup resolves a codepoint's property, checking the override trie first.

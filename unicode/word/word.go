@@ -22,29 +22,22 @@ const (
 func (t WordType) IsWordLike() bool { return t != WordNone }
 
 // wordTypeTable maps base and absorption property indices to WordType.
-// Lookahead states (> lastCodepointProperty) are not indexed because the
-// engine resolves them before reporting a boundary property.
-var wordTypeTable = [propCount]WordType{
-	pALetter:      WordLetter,
-	pHebrewLetter: WordLetter,
-	pKatakana:     WordLetter,
-	pExtendNumLet: WordLetter,
-	pNumeric:      WordNumber,
-	pExtPict:      WordNone,
-
-	pALetter_ZWJ:      WordLetter,
-	pHebrewLetter_ZWJ: WordLetter,
-	pKatakana_ZWJ:     WordLetter,
-	pExtendNumLet_ZWJ: WordLetter,
-	pNumeric_ZWJ:      WordNumber,
-	pExtPict_ZWJ:      WordNone,
-
-	pAHL_MidLetter: WordLetter,
-	pHL_MidLetter:  WordLetter,
-	pNum_MidNum:    WordNumber,
-	pHL_DQ:         WordLetter,
-	pRI_RI:         WordNone,
-}
+// Only base (0–19) and absorption (20–28) indices appear here. Lookahead
+// states (> lastCodepointProperty) never reach BoundaryProperty because
+// the engine resolves them via NoMatch/rewind before reporting a break.
+var wordTypeTable = func() [propCount]WordType {
+	var t [propCount]WordType
+	for i := range t {
+		switch uint8(i) {
+		case pALetter, pHebrewLetter, pKatakana, pExtendNumLet,
+			pALetter_ZWJ, pHebrewLetter_ZWJ, pKatakana_ZWJ, pExtendNumLet_ZWJ:
+			t[i] = WordLetter
+		case pNumeric, pNumeric_ZWJ:
+			t[i] = WordNumber
+		}
+	}
+	return t
+}()
 
 // trieTable adapts the generated wordTrie to the segmenter.PropertyTable
 // interface.
@@ -66,7 +59,6 @@ var ruleData = &segmenter.RuleData{
 	LastCodepointProperty: lastCodepointProperty,
 	SOT:                   pSOT,
 	EOT:                   pEOT,
-	ASCIIBreak:            false,
 }
 
 // Segmenter iterates over the words in a byte slice.
@@ -86,9 +78,47 @@ func NewSegmenter(input []byte) *Segmenter {
 	return &Segmenter{s: segmenter.New(ruleData, input)}
 }
 
+func isAlphaNum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+func isUnsafeAfterAlphaNum(b byte) bool {
+	switch b {
+	case '\'', '"', ',', '.', ':', ';', '_':
+		return true
+	}
+	return isAlphaNum(b)
+}
+
 // Next advances to the next word boundary segment. It returns false when the
 // end of input has been reached.
-func (w *Segmenter) Next() bool { return w.s.Next() }
+func (w *Segmenter) Next() bool {
+	input := w.s.Input()
+	pos := w.s.End()
+	if pos >= len(input) {
+		return false
+	}
+
+	// ASCII fast path: consume an [a-zA-Z0-9]+ run in a tight loop when
+	// followed by EOF or a safe ASCII break (not apostrophe, period, comma,
+	// underscore, etc. which need the full state machine for lookahead).
+	b := input[pos]
+	if b < 0x80 && isAlphaNum(b) {
+		end := pos + 1
+		for end < len(input) && isAlphaNum(input[end]) {
+			end++
+		}
+		if end >= len(input) || (input[end] < 0x80 && !isUnsafeAfterAlphaNum(input[end])) {
+			prop := pALetter
+			if input[end-1] >= '0' && input[end-1] <= '9' {
+				prop = pNumeric
+			}
+			w.s.FastForward(end, prop)
+			return true
+		}
+	}
+	return w.s.Next()
+}
 
 // Bytes returns the current segment as a byte slice.
 func (w *Segmenter) Bytes() []byte { return w.s.Bytes() }
