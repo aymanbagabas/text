@@ -53,6 +53,8 @@ type RuleData struct {
 	SOT         uint8 // start-of-text property index
 	EOT         uint8 // end-of-text property index
 	ComplexProp uint8 // SA property index (for dictionary delegation), 0 if none
+
+	ASCIIBreak bool // if true, an ASCII byte (except CR/LF) followed by ASCII or EOF is always a 1-byte segment
 }
 
 // ComplexHandler segments runs of complex-script text (SA property).
@@ -92,6 +94,16 @@ func (s *Segmenter) Next() bool {
 	}
 
 	s.start = s.pos
+
+	if s.data.ASCIIBreak {
+		b := s.input[s.pos]
+		if b < 0x80 && b != '\r' && b != '\n' {
+			if s.pos+1 >= len(s.input) || s.input[s.pos+1] < 0x80 {
+				s.pos++
+				return true
+			}
+		}
+	}
 
 	var leftProp uint8
 	if s.pos == 0 {

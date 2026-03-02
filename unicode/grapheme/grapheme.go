@@ -27,6 +27,11 @@ var ruleData = &segmenter.RuleData{
 	PropCount: propCount,
 	SOT:       pSOT,
 	EOT:       pEOT,
+
+	// This optimization is valid for grapheme clusters because all ASCII bytes
+	// are in the same property (Other) and have no special break rules except
+	// around CR/LF, which are handled by the break state table.
+	ASCIIBreak: true,
 }
 
 // Segmenter iterates over the grapheme clusters in a byte slice.
