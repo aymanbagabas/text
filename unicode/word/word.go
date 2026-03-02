@@ -25,19 +25,18 @@ func (t WordType) IsWordLike() bool { return t != WordNone }
 // Only base (0–19) and absorption (20–28) indices appear here. Lookahead
 // states (> lastCodepointProperty) never reach BoundaryProperty because
 // the engine resolves them via NoMatch/rewind before reporting a break.
-var wordTypeTable = func() [propCount]WordType {
-	var t [propCount]WordType
-	for i := range t {
-		switch uint8(i) {
-		case pALetter, pHebrewLetter, pKatakana, pExtendNumLet,
-			pALetter_ZWJ, pHebrewLetter_ZWJ, pKatakana_ZWJ, pExtendNumLet_ZWJ:
-			t[i] = WordLetter
-		case pNumeric, pNumeric_ZWJ:
-			t[i] = WordNumber
-		}
-	}
-	return t
-}()
+var wordTypeTable = [propCount]WordType{
+	pALetter:          WordLetter,
+	pHebrewLetter:     WordLetter,
+	pKatakana:         WordLetter,
+	pExtendNumLet:     WordLetter,
+	pALetter_ZWJ:      WordLetter,
+	pHebrewLetter_ZWJ: WordLetter,
+	pKatakana_ZWJ:     WordLetter,
+	pExtendNumLet_ZWJ: WordLetter,
+	pNumeric:          WordNumber,
+	pNumeric_ZWJ:      WordNumber,
+}
 
 // trieTable adapts the generated wordTrie to the segmenter.PropertyTable
 // interface.

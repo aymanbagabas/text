@@ -37,7 +37,7 @@ var gcbMap = map[string]uint8{
 
 func main() {
 	gen.Init()
-	gen.Repackage("gen_rules.go", "rules.go", "grapheme")
+	gen.Repackage("gen_trieval.go", "trieval.go", "grapheme")
 	genTables()
 }
 
@@ -124,4 +124,61 @@ func genTables() {
 
 	w.WriteComment("stride is the number of columns in breakTable.")
 	fmt.Fprintf(w, "const stride = %d\n", propCount)
+}
+
+// ---------------------------------------------------------------------------
+// Grapheme cluster boundary rules (UAX #29)
+// ---------------------------------------------------------------------------
+
+func p(props ...uint8) []uint8 { return props }
+
+// rules encodes the UAX #29 grapheme cluster boundary rules (GB3–GB999)
+// as input to [segmenter.BuildStateTable]. Rules are listed in priority
+// order; the first match wins. Combined states handle GB9c, GB11, and
+// GB12/13 lookahead.
+//
+// References: https://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundary_Rules
+var rules = []segmenter.Rule{
+	{Left: p(pSOT), Right: nil, Break: false},                                    // GB1
+	{Left: nil, Right: p(pEOT), Break: true},                                     // GB2
+	{Left: p(pCR), Right: p(pLF), Break: false},                                  // GB3
+	{Left: p(pControl, pCR, pLF), Right: nil, Break: true},                       // GB4
+	{Left: nil, Right: p(pControl, pCR, pLF), Break: true},                       // GB5
+	{Left: p(pL), Right: p(pL, pV, pLV, pLVT), Break: false},                    // GB6
+	{Left: p(pLV, pV), Right: p(pV, pT), Break: false},                          // GB7
+	{Left: p(pLVT, pT), Right: p(pT), Break: false},                             // GB8
+	{Left: nil, Right: p(pExtend, pZWJ, pInCBExtend, pInCBLinker), Break: false}, // GB9
+	{Left: nil, Right: p(pSpacingMark), Break: false},                            // GB9a
+	{Left: p(pPrepend), Right: nil, Break: false},                                // GB9b
+	{Left: p(pInCB_Linker), Right: p(pInCBConsonant), Break: false},              // GB9c
+	{Left: p(pExtPict_ZWJ), Right: p(pExtPict), Break: false},                   // GB11
+	{Left: p(pRegionalIndicator), Right: p(pRegionalIndicator), Break: false},    // GB12/13
+	{Left: p(pRI_RI), Right: p(pRegionalIndicator), Break: true},                // GB12/13
+	{Left: nil, Right: nil, Break: true},                                         // GB999
+}
+
+// combinedStates defines transitions into synthetic combined-state properties.
+// These overlay the rule table to implement multi-character lookahead without
+// backtracking.
+var combinedStates = []segmenter.CombinedState{
+	// GB12/13: RI × RI → enter pRI_RI (pair consumed; next RI will break).
+	{Left: pRegionalIndicator, Right: pRegionalIndicator, State: pRI_RI},
+
+	// GB11: ExtPict × Extend → enter pExtPict_Ext (accumulating extends).
+	{Left: pExtPict, Right: pExtend, State: pExtPict_Ext},
+	{Left: pExtPict, Right: pInCBExtend, State: pExtPict_Ext},
+	// GB11: ExtPict_Ext × Extend → stay in pExtPict_Ext.
+	{Left: pExtPict_Ext, Right: pExtend, State: pExtPict_Ext},
+	{Left: pExtPict_Ext, Right: pInCBExtend, State: pExtPict_Ext},
+	// GB11: ExtPict_Ext × ZWJ → enter pExtPict_ZWJ (ready for next ExtPict).
+	{Left: pExtPict_Ext, Right: pZWJ, State: pExtPict_ZWJ},
+	// GB11: ExtPict × ZWJ → enter pExtPict_ZWJ (no intervening Extend).
+	{Left: pExtPict, Right: pZWJ, State: pExtPict_ZWJ},
+
+	// GB9c: Consonant × Linker → enter pInCB_Linker.
+	{Left: pInCBConsonant, Right: pInCBLinker, State: pInCB_Linker},
+	// GB9c: InCB_Linker × Extend → stay (absorb extends within the cluster).
+	{Left: pInCB_Linker, Right: pInCBExtend, State: pInCB_Linker},
+	// GB9c: InCB_Linker × Linker → stay (multiple linkers allowed).
+	{Left: pInCB_Linker, Right: pInCBLinker, State: pInCB_Linker},
 }
