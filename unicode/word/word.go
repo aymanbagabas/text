@@ -7,6 +7,45 @@ package word
 
 import "golang.org/x/text/internal/segmenter"
 
+// WordType classifies a word segment.
+type WordType uint8
+
+// Word types as defined by UAX #29, with WordNone representing non-word-like
+// segments such as whitespace and punctuation.
+const (
+	WordNone   WordType = iota // not word-like (whitespace, punctuation, etc.)
+	WordNumber                 // numeric segment
+	WordLetter                 // word segment (letters, CJK ideographs, etc.)
+)
+
+// IsWordLike reports whether t represents a word-like segment (Letter or Number).
+func (t WordType) IsWordLike() bool { return t != WordNone }
+
+// wordTypeTable maps base and absorption property indices to WordType.
+// Lookahead states (> lastCodepointProperty) are not indexed because the
+// engine resolves them before reporting a boundary property.
+var wordTypeTable = [propCount]WordType{
+	pALetter:      WordLetter,
+	pHebrewLetter: WordLetter,
+	pKatakana:     WordLetter,
+	pExtendNumLet: WordLetter,
+	pNumeric:      WordNumber,
+	pExtPict:      WordNone,
+
+	pALetter_ZWJ:      WordLetter,
+	pHebrewLetter_ZWJ: WordLetter,
+	pKatakana_ZWJ:     WordLetter,
+	pExtendNumLet_ZWJ: WordLetter,
+	pNumeric_ZWJ:      WordNumber,
+	pExtPict_ZWJ:      WordNone,
+
+	pAHL_MidLetter: WordLetter,
+	pHL_MidLetter:  WordLetter,
+	pNum_MidNum:    WordNumber,
+	pHL_DQ:         WordLetter,
+	pRI_RI:         WordNone,
+}
+
 // trieTable adapts the generated wordTrie to the segmenter.PropertyTable
 // interface.
 type trieTable struct{ t wordTrie }
@@ -59,3 +98,11 @@ func (w *Segmenter) Text() string { return w.s.Text() }
 
 // Position returns the byte offsets [start, end) of the current segment.
 func (w *Segmenter) Position() (start, end int) { return w.s.Position() }
+
+// WordType returns the classification of the current segment.
+func (w *Segmenter) WordType() WordType {
+	return wordTypeTable[w.s.BoundaryProperty()]
+}
+
+// IsWordLike reports whether the current segment is word-like (letter or number).
+func (w *Segmenter) IsWordLike() bool { return w.WordType().IsWordLike() }

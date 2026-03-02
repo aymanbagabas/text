@@ -119,6 +119,8 @@ type Segmenter struct {
 	input []byte
 	start int // start of current segment
 	pos   int // end of current segment (updated by Next)
+
+	boundaryProp uint8 // property of the left side at the break point
 }
 
 // New returns a Segmenter that iterates over segments in input
@@ -141,6 +143,7 @@ func (s *Segmenter) Next() bool {
 		b := s.input[s.pos]
 		if b < 0x80 && b != '\r' && b != '\n' {
 			if s.pos+1 >= len(s.input) || s.input[s.pos+1] < 0x80 {
+				s.boundaryProp = 0 // Reset to Other property for ASCII breaks.
 				s.pos++
 				return true
 			}
@@ -155,6 +158,7 @@ func (s *Segmenter) Next() bool {
 		s.pos += size
 		switch state {
 		case Break:
+			s.boundaryProp = leftProp
 			return true
 		case Keep:
 			leftProp = rightProp
@@ -172,6 +176,7 @@ func (s *Segmenter) Next() bool {
 	}
 
 	marker := s.pos
+	markerLeftProp := leftProp
 
 	for s.pos < len(s.input) {
 		rightProp, size := s.lookup(s.input[s.pos:])
@@ -182,15 +187,18 @@ func (s *Segmenter) Next() bool {
 			if s.pos == s.start {
 				s.pos += size
 			}
+			s.boundaryProp = leftProp
 			return true
 
 		case Keep:
 			leftProp = rightProp
 			s.pos += size
 			marker = s.pos
+			markerLeftProp = rightProp
 
 		case NoMatch:
 			s.pos = marker
+			s.boundaryProp = markerLeftProp
 			if s.pos == s.start {
 				_, sz := s.lookup(s.input[s.pos:])
 				s.pos += sz
@@ -200,13 +208,14 @@ func (s *Segmenter) Next() bool {
 		default: // state >= 0: enter combined state
 			idx := state.StateIndex()
 			if state.IsIntermediate() {
-				// Intermediate (LB15b): rewind point ALWAYS advances.
 				marker = s.pos + size
+				if leftProp <= s.data.LastCodepointProperty {
+					markerLeftProp = idx
+				}
 			} else {
-				// Index: marker moves only when previous state is a
-				// codepoint property (base prop or absorption).
 				if leftProp <= s.data.LastCodepointProperty {
 					marker = s.pos
+					markerLeftProp = idx
 				}
 			}
 			leftProp = idx
@@ -217,10 +226,13 @@ func (s *Segmenter) Next() bool {
 	// End of text — check EOT rule.
 	eotState := s.data.BreakTable[int(leftProp)*s.data.Stride+int(s.data.EOT)]
 	if eotState == NoMatch {
+		s.boundaryProp = markerLeftProp
 		s.pos = marker
 		if s.pos == s.start {
 			s.pos = len(s.input)
 		}
+	} else {
+		s.boundaryProp = leftProp
 	}
 	return true
 }
@@ -241,6 +253,14 @@ func (s *Segmenter) Text() string {
 // It is only valid after [Next] returns true.
 func (s *Segmenter) Position() (start, end int) {
 	return s.start, s.pos
+}
+
+// BoundaryProperty returns the property index of the left side at the break
+// point, after [Next] returns true. This is used by the word segmenter to
+// derive WordType (letter, number, or none). The engine tracks this
+// generically; interpretation is up to the per-package segmenter.
+func (s *Segmenter) BoundaryProperty() uint8 {
+	return s.boundaryProp
 }
 
 // lookup resolves a codepoint's property, checking the override trie first.
