@@ -24,3 +24,18 @@ func ExampleSegmenter() {
 	// "World"
 	// "!"
 }
+
+func ExampleSegmenter_IsWordLike() {
+	input := []byte("Hello, World! 123")
+
+	seg := word.NewSegmenter(input)
+	for seg.Next() {
+		if seg.IsWordLike() {
+			fmt.Printf("%q\n", seg.Text())
+		}
+	}
+	// Output:
+	// "Hello"
+	// "World"
+	// "123"
+}
