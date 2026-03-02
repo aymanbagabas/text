@@ -23,10 +23,11 @@ var ruleData = &segmenter.RuleData{
 		}
 		return t
 	}(),
-	Stride:    stride,
-	PropCount: propCount,
-	SOT:       pSOT,
-	EOT:       pEOT,
+	Stride:                stride,
+	PropCount:             propCount,
+	LastCodepointProperty: lastCodepointProperty,
+	SOT:                   pSOT,
+	EOT:                   pEOT,
 
 	// This optimization is valid for grapheme clusters because all ASCII bytes
 	// are in the same property (Other) and have no special break rules except

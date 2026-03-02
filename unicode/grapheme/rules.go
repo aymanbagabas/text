@@ -47,6 +47,8 @@ const (
 	propCount // total number of properties (= stride)
 )
 
+const lastCodepointProperty = pInCB_Linker
+
 // rules encodes the UAX #29 grapheme cluster boundary rules (GB3–GB999)
 // as input to [segmenter.BuildStateTable]. Rules are listed in priority
 // order; the first match wins. Combined states handle GB9c, GB11, and
