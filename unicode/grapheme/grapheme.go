@@ -15,14 +15,8 @@ type trieTable struct{ t graphemeTrie }
 func (tt *trieTable) Lookup(b []byte) (uint8, int) { return tt.t.lookup(b) }
 
 var ruleData = &segmenter.RuleData{
-	Properties: &trieTable{},
-	BreakTable: func() []segmenter.BreakState {
-		t := make([]segmenter.BreakState, len(breakTable))
-		for i, v := range breakTable {
-			t[i] = segmenter.BreakState(v)
-		}
-		return t
-	}(),
+	Properties:            &trieTable{},
+	BreakTable:            breakTable[:],
 	Stride:                stride,
 	PropCount:             propCount,
 	LastCodepointProperty: lastCodepointProperty,

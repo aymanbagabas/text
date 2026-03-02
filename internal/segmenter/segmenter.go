@@ -19,8 +19,10 @@
 //     regardless of LastCodepointProperty. Used for LB15b in line break.
 package segmenter
 
-// BreakState represents a cell in the break state table.
-type BreakState int8
+// BreakState is the element type of a break state table cell.
+// It is a type alias so that []int8 (the generated table type) and
+// []BreakState are interchangeable, eliminating init-time copies.
+type BreakState = int8
 
 const (
 	// Break signals a definite break between left and right.
@@ -33,20 +35,18 @@ const (
 
 	// Values 0–63 are Index combined states.
 	// Values 64–127 are Intermediate combined states (LB15b only).
-	// Use [StateIndex] to extract the property index and [IsIntermediate]
-	// to check the flavour.
 
 	intermediateBit BreakState = 0x40
 )
 
-// IsIntermediate reports whether state is an Intermediate combined state.
-func (s BreakState) IsIntermediate() bool {
+// isIntermediate reports whether state is an Intermediate combined state.
+func isIntermediate(s int8) bool {
 	return s >= 0 && s&intermediateBit != 0
 }
 
-// StateIndex extracts the combined-state property index from a combined
-// BreakState (either Index or Intermediate). The caller must ensure s >= 0.
-func (s BreakState) StateIndex() uint8 {
+// stateIndex extracts the combined-state property index from a combined
+// state (either Index or Intermediate). The caller must ensure s >= 0.
+func stateIndex(s int8) uint8 {
 	return uint8(s &^ intermediateBit)
 }
 
@@ -151,7 +151,7 @@ func (s *Segmenter) Next() bool {
 			leftProp = rightProp
 		default:
 			if state >= 0 {
-				leftProp = state.StateIndex()
+				leftProp = stateIndex(state)
 			} else {
 				leftProp = rightProp
 			}
@@ -193,8 +193,8 @@ func (s *Segmenter) Next() bool {
 			return true
 
 		default: // state >= 0: enter combined state
-			idx := state.StateIndex()
-			if state.IsIntermediate() {
+			idx := stateIndex(state)
+			if isIntermediate(state) {
 				marker = s.end + size
 				if leftProp <= s.data.LastCodepointProperty {
 					markerLeftProp = idx
