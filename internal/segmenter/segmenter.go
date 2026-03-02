@@ -12,51 +12,59 @@
 // where actions are break, keep, no-match (rewind), or enter-combined-state.
 //
 // Combined states come in two flavours:
-//   - Index states (the default) enter a combined state. Marker movement
+//   - Index states (0–119) enter a combined state. Marker movement
 //     is controlled by [RuleData.LastCodepointProperty]: the marker only
 //     advances when the previous state index ≤ LastCodepointProperty.
-//   - Intermediate states (bit 0x40 set) always advance the rewind point,
-//     regardless of LastCodepointProperty. Used for LB15b in line break.
+//   - Intermediate states (120–252) always advance the rewind point,
+//     regardless of LastCodepointProperty. Encoded as property index + 120.
 package segmenter
 
 // BreakState is the element type of a break state table cell.
-// It is a type alias so that []int8 (the generated table type) and
-// []BreakState are interchangeable, eliminating init-time copies.
-type BreakState = int8
+// Encoding matches ICU4X: Index 0–119, Intermediate 120–252,
+// Break 253, NoMatch 254, Keep 255.
+type BreakState = uint8
 
 const (
 	// Break signals a definite break between left and right.
-	Break BreakState = -128
-	// Keep signals no break; advance right and continue with right as the new left.
-	Keep BreakState = -2
+	Break BreakState = 253
 	// NoMatch signals that a combined state did not match; break at the
 	// saved marker position (rewind).
-	NoMatch BreakState = -1
+	NoMatch BreakState = 254
+	// Keep signals no break; advance right and continue with right as the new left.
+	Keep BreakState = 255
 
-	// Values 0–63 are Index combined states.
-	// Values 64–127 are Intermediate combined states (LB15b only).
+	// Values 0–119 are Index combined states.
+	// Values 120–252 are Intermediate combined states (property index + intermediateOffset).
 
-	intermediateBit BreakState = 0x40
+	intermediateOffset BreakState = 120
 )
 
 // isIntermediate reports whether state is an Intermediate combined state.
-func isIntermediate(s int8) bool {
-	return s >= 0 && s&intermediateBit != 0
+func isIntermediate(s uint8) bool {
+	return s >= intermediateOffset && s < Break
+}
+
+// isCombinedState reports whether state is any combined state (Index or Intermediate).
+func isCombinedState(s uint8) bool {
+	return s < Break
 }
 
 // stateIndex extracts the combined-state property index from a combined
-// state (either Index or Intermediate). The caller must ensure s >= 0.
-func stateIndex(s int8) uint8 {
-	return uint8(s &^ intermediateBit)
+// state (either Index or Intermediate).
+func stateIndex(s uint8) uint8 {
+	if s >= intermediateOffset {
+		return s - intermediateOffset
+	}
+	return s
 }
 
 // IndexState returns the BreakState encoding for an Index combined
 // state with the given property index.
-func IndexState(prop uint8) BreakState { return BreakState(prop) }
+func IndexState(prop uint8) BreakState { return prop }
 
 // IntermediateState returns the BreakState encoding for an Intermediate
-// combined state with the given property index. Used for LB15b.
-func IntermediateState(prop uint8) BreakState { return BreakState(prop) | intermediateBit }
+// combined state with the given property index.
+func IntermediateState(prop uint8) BreakState { return prop + intermediateOffset }
 
 // PropertyTable abstracts the trie lookup for codepoint → property index.
 type PropertyTable interface {
@@ -150,7 +158,7 @@ func (s *Segmenter) Next() bool {
 		case Keep:
 			leftProp = rightProp
 		default:
-			if state >= 0 {
+			if isCombinedState(state) {
 				leftProp = stateIndex(state)
 			} else {
 				leftProp = rightProp
@@ -192,7 +200,7 @@ func (s *Segmenter) Next() bool {
 			}
 			return true
 
-		default: // state >= 0: enter combined state
+		default: // combined state (Index or Intermediate)
 			idx := stateIndex(state)
 			if isIntermediate(state) {
 				marker = s.end + size

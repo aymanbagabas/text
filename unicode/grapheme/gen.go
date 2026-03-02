@@ -113,12 +113,12 @@ func genTables() {
 		`breakTable is the grapheme cluster break state table.
 	breakTable[left*stride + right] encodes the action for (left, right).
 	See segmenter.BreakState for the action encoding.`)
-	fmt.Fprintf(w, "var breakTable = [...]int8{")
+	fmt.Fprintf(w, "var breakTable = [...]uint8{")
 	for i, v := range table {
 		if i%int(propCount) == 0 {
 			fmt.Fprintf(w, "\n\t")
 		}
-		fmt.Fprintf(w, "%d, ", int8(v))
+		fmt.Fprintf(w, "%d, ", v)
 	}
 	fmt.Fprintf(w, "\n}\n\n")
 
