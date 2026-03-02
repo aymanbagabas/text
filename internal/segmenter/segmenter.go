@@ -253,6 +253,15 @@ func (s *Segmenter) BoundaryProperty() uint8 {
 // End returns the end position of the last segment (= start of the next).
 func (s *Segmenter) End() int { return s.end }
 
+// SetEnd sets the end position. Used by wrapper-level fast paths that
+// scan ahead through known-safe bytes before calling [Next].
+func (s *Segmenter) SetEnd(pos int) { s.end = pos }
+
+// SetStart sets the start position of the current segment. Used by
+// wrapper-level fast paths to fix up the segment start after [Next]
+// when bytes were skipped via [SetEnd] before the call.
+func (s *Segmenter) SetStart(pos int) { s.start = pos }
+
 // Input returns the input byte slice.
 func (s *Segmenter) Input() []byte { return s.input }
 

@@ -40,9 +40,63 @@ func NewSegmenter(input []byte) *Segmenter {
 	return &Segmenter{s: segmenter.New(ruleData, input)}
 }
 
+// isSafeASCII reports whether b is an ASCII byte that never participates in
+// sentence break rules: letters, digits, and space. All other ASCII bytes
+// (punctuation, control characters) may be terminators, closers, paragraph
+// separators, or other rule-relevant properties.
+func isSafeASCII(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == ' '
+}
+
+// asciiProp returns the sentence break property for a safe ASCII byte.
+func asciiProp(b byte) uint8 {
+	if b >= 'a' && b <= 'z' {
+		return pLower
+	}
+	if b >= 'A' && b <= 'Z' {
+		return pUpper
+	}
+	if b >= '0' && b <= '9' {
+		return pNumeric
+	}
+	return pSp // space
+}
+
 // Next advances to the next sentence boundary segment. It returns false when
 // the end of input has been reached.
-func (se *Segmenter) Next() bool { return se.s.Next() }
+func (se *Segmenter) Next() bool {
+	input := se.s.Input()
+	pos := se.s.End()
+	if pos >= len(input) {
+		return false
+	}
+
+	// ASCII fast path: scan past contiguous safe ASCII bytes ([a-zA-Z0-9 ]).
+	// These never trigger sentence breaks between each other.
+	end := pos
+	for end < len(input) && isSafeASCII(input[end]) {
+		end++
+	}
+
+	if end >= len(input) {
+		// Entire remaining input is safe ASCII — one sentence.
+		se.s.FastForward(end, asciiProp(input[end-1]))
+		return true
+	}
+
+	// Back up one byte so the engine has correct leftProp context. The
+	// engine's Next will read the backed-up byte via trie lookup (a single
+	// array index for ASCII).
+	if end > pos {
+		se.s.SetEnd(end - 1)
+	}
+
+	ok := se.s.Next()
+	if ok && end > pos {
+		se.s.SetStart(pos)
+	}
+	return ok
+}
 
 // Bytes returns the current sentence as a byte slice.
 func (se *Segmenter) Bytes() []byte { return se.s.Bytes() }
