@@ -53,6 +53,10 @@ type ChainStep struct {
 	Props []uint8
 	// State is the combined-state index assigned to this step.
 	State uint8
+	// Interm overrides ChainRule.Interm for this step when explicitly set.
+	// Use IntermTrue / IntermFalse to override; the zero value means
+	// "inherit from ChainRule.Interm".
+	Interm IntermOverride
 }
 
 // ChainRule describes a multi-character lookahead pattern such as:
@@ -67,6 +71,15 @@ type ChainStep struct {
 //
 // SelfLoop, if set, adds transparency transitions within each chain
 // state (e.g., Extend/Format/ZWJ for WB4).
+// IntermOverride controls per-step Interm overrides in ChainStep.
+type IntermOverride int8
+
+const (
+	IntermDefault IntermOverride = iota // inherit from ChainRule.Interm
+	IntermTrue                          // force Intermediate
+	IntermFalse                         // force Index (non-Intermediate)
+)
+
 type ChainRule struct {
 	Entry    []uint8
 	Steps    []ChainStep
@@ -85,13 +98,21 @@ func (r ChainRule) Expand() []CombinedState {
 			lefts = []uint8{r.Steps[i-1].State}
 		}
 
+		interm := r.Interm
+		switch step.Interm {
+		case IntermTrue:
+			interm = true
+		case IntermFalse:
+			interm = false
+		}
+
 		for _, l := range lefts {
 			for _, right := range step.Props {
 				cs = append(cs, CombinedState{
 					Left:   l,
 					Right:  right,
 					State:  step.State,
-					Interm: r.Interm,
+					Interm: interm,
 				})
 			}
 		}
@@ -101,7 +122,7 @@ func (r ChainRule) Expand() []CombinedState {
 				Left:   step.State,
 				Right:  sl,
 				State:  step.State,
-				Interm: r.Interm,
+				Interm: interm,
 			})
 		}
 	}
