@@ -20,8 +20,8 @@ const (
 
 	CR        Class = 1 << iota // SB=CR
 	LF                          // SB=LF
-	Sep                         // SB=Sep
 	Extend                      // SB=Extend
+	Sep                         // SB=Sep
 	Format                      // SB=Format
 	Sp                          // SB=Sp
 	Lower                       // SB=Lower
@@ -29,8 +29,8 @@ const (
 	OLetter                     // SB=OLetter
 	Numeric                     // SB=Numeric
 	ATerm                       // SB=ATerm
-	STerm                       // SB=STerm
 	SContinue                   // SB=SContinue
+	STerm                       // SB=STerm
 	Close                       // SB=Close
 )
 
