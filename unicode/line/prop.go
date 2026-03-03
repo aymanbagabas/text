@@ -7,5 +7,5 @@ const (
 	lastCodepointProperty uint8 = 91
 	pSOT                  uint8 = 106
 	pEOT                  uint8 = 107
-	pSA                   uint8 = 30
+	pSA                   uint8 = 41
 )

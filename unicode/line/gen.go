@@ -80,20 +80,29 @@ func main() {
 func genTables() {
 	// --- Flattener setup ---
 	flat := segmenter.NewFlattener[Class]()
-	numBase := flat.AddAllBaseProperties(allBaseProperties) // 50 (XX + 49 base properties)
+	flat.AddAllBaseProperties(allBaseProperties)
+
+	// Register multi-bit combinations (base property + orthogonal trait).
+	flat.Add(OP | EastAsian) // East Asian open punctuation
+	flat.Add(CP | EastAsian) // East Asian close parenthesis
+	flat.Add(QU | Pi)        // Quotation with gc=Pi
+	flat.Add(QU | Pf)        // Quotation with gc=Pf
 
 	idx := flat.Index
 
 	// --- LB9 absorption states ---
-	// For each base property that participates in LB9, assign a _XX state.
-	// LB9Excluded (BK, CR, LF, NL, SP, ZW, Extend, ZWJ) do not absorb.
-	xxOfMap := make(map[Class]uint8) // base Class → absorption state index
-	nextIdx := uint8(numBase)
+	// For each registered key that participates in LB9, assign a _XX state.
+	// Excluded: BK, CR, LF, NL, SP, ZW, Extend, ZWJ (never absorbers).
+	// Trait flags (EastAsian, Pi, Pf) are NOT in this mask — multi-bit keys
+	// like OP|EastAsian still participate in LB9 via their base property.
+	const lb9Excluded = BK | CR | LF | NL | SP | ZW | Extend | ZWJ
+	xxOfMap := make(map[Class]uint8) // registered key → absorption state index
+	nextIdx := uint8(flat.Len())     // starts after all registered keys
 	for _, cls := range flat.Keys() {
 		if cls == 0 { // XX handled separately below
 			continue
 		}
-		if cls&LB9Excluded != 0 {
+		if cls&lb9Excluded != 0 {
 			continue
 		}
 		xxOfMap[cls] = nextIdx
@@ -105,9 +114,9 @@ func genTables() {
 
 	lastCodepointProperty := nextIdx - 1
 
-	// expandAll returns the uint8 indices of all registered base properties
+	// expandAll returns the uint8 indices of all registered keys
 	// matching mask, plus their LB9 absorption states (if any).
-	// mask == 0 is a special case: it matches only the XX (zero) property.
+	// mask == 0 is a special case: it matches only the XX (zero) key.
 	expandAll := func(mask Class) []uint8 {
 		var r []uint8
 		for _, cls := range flat.Keys() {
@@ -133,7 +142,7 @@ func genTables() {
 	nextIdx++
 	pOP_EA_SP := nextIdx
 	nextIdx++
-	pQU_PI_SP := nextIdx
+	pQU_SP := nextIdx
 	nextIdx++
 	pCL_SP := nextIdx
 	nextIdx++
@@ -188,8 +197,8 @@ func genTables() {
 		props[r] = idx(cls)
 	})
 
-	// Step 2: Parse East_Asian_Width for synthetic OP_EA, CP_EA.
-	eaw := make([]byte, unicode.MaxRune+1) // 'F', 'H', 'W', 'N', 'A', 'Na'
+	// Step 2: Parse East_Asian_Width.
+	eaw := make([]byte, unicode.MaxRune+1)
 	ucd.Parse(gen.OpenUCDFile("EastAsianWidth.txt"), func(p *ucd.Parser) {
 		r := p.Rune(0)
 		val := p.String(1)
@@ -198,7 +207,7 @@ func genTables() {
 		}
 	})
 
-	// Step 3: Parse General_Category for QU_PI, QU_PF.
+	// Step 3: Parse General_Category.
 	gc := make([]string, unicode.MaxRune+1)
 	ucd.Parse(gen.OpenUCDFile("UnicodeData.txt"), func(p *ucd.Parser) {
 		r := p.Rune(0)
@@ -215,24 +224,24 @@ func genTables() {
 		}
 	})
 
-	// Step 5: Create synthetic properties.
+	// Step 5: Create synthetic properties by combining base + trait flags.
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		isEA := eaw[r] == 'F' || eaw[r] == 'H' || eaw[r] == 'W'
 		switch props[r] {
 		case idx(OP):
 			if isEA {
-				props[r] = idx(OP_EA)
+				props[r] = idx(OP | EastAsian)
 			}
 		case idx(CP):
 			if isEA {
-				props[r] = idx(CP_EA)
+				props[r] = idx(CP | EastAsian)
 			}
 		case idx(QU):
 			switch gc[r] {
 			case "Pi":
-				props[r] = idx(QU_PI)
+				props[r] = idx(QU | Pi)
 			case "Pf":
-				props[r] = idx(QU_PF)
+				props[r] = idx(QU | Pf)
 			}
 		case idx(SA):
 			// LB1: SA with gc in {Mn, Mc} → CM behavior (resolve as AL per LB10).
@@ -278,19 +287,27 @@ func genTables() {
 	e := expandAll
 	allXX := e(0) // XX + pXX_XX (zero value can't be expressed in bitflag masks)
 
-	// Property groups via expandAll + composite constants.
-	allOP := e(AnyOP)
-	allCP := e(AnyCP)
+	// x returns the exact index + absorption state for a single registered key.
+	x := func(cls Class) []uint8 {
+		r := []uint8{idx(cls)}
+		if xx, ok := xxOfMap[cls]; ok {
+			r = append(r, xx)
+		}
+		return r
+	}
+
+	// Property groups via expandAll.
+	// e(OP) returns both OP and OP|EastAsian (plus their absorption states).
+	// e(CP) returns both CP and CP|EastAsian.
+	// e(QU) returns QU, QU|Pi, and QU|Pf.
+	allOP := e(OP)
+	allCP := e(CP)
 	allCL := e(CL)
-	allClose := e(AnyClose) // CL + CP + CP_EA
-	allQU := e(AnyQU)
-	allQU_PI := e(QU_PI)
-	_ = allQU_PI // reserved for LB15a
-	allQU_PF := e(QU_PF)
-	_ = allQU_PF // reserved for LB15b
+	allClose := e(CL | CP) // CL, CP, CP|EastAsian
+	allQU := e(QU)
 
 	allHL := e(HL)
-	allAL_HL := append(e(ALLike|HL), allXX...)
+	allALLike := append(e(AL|SA|Extend|ZWJ|HL), allXX...) // ALLike + HL + XX
 
 	allNU := e(NU)
 	allPR := e(PR)
@@ -310,14 +327,14 @@ func genTables() {
 	allEX := e(EX)
 
 	allAP := e(AP)
-	allAksara := e(Aksara)         // AK, AS, VF, VI
-	allAksaraFinal := e(AksaraFinal) // AK, VF
+	allAksara := e(AK | AS | VF | VI)
+	allAksaraFinal := e(AK | VF)
 
 	allJL := e(JL)
 	allJT := e(JT)
-	allHangul := e(Hangul)
+	allHangul := e(JL | JV | JT | H2 | H3)
 
-	allIdeographic := e(Ideographic) // ID, EB, EM
+	allIdeographic := e(ID | EB | EM)
 
 	// --- LB9 absorption ---
 	lb9Ignored := p(idx(Extend), idx(ZWJ))
@@ -347,7 +364,7 @@ func genTables() {
 
 	// LB14: OP SP* ×
 	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: e(OP),
+		Entry: x(OP),
 		Steps: []segmenter.ChainStep{
 			{Props: p(idx(SP)), State: pOP_SP},
 		},
@@ -355,7 +372,7 @@ func genTables() {
 	}.Expand()...)
 	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pOP_SP, Right: idx(SP), State: pOP_SP, Interm: true})
 	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: e(OP_EA),
+		Entry: x(OP | EastAsian),
 		Steps: []segmenter.ChainStep{
 			{Props: p(idx(SP)), State: pOP_EA_SP},
 		},
@@ -367,11 +384,11 @@ func genTables() {
 	combinedStates = append(combinedStates, segmenter.ChainRule{
 		Entry: allQU,
 		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pQU_PI_SP},
+			{Props: p(idx(SP)), State: pQU_SP},
 		},
 		Interm: true,
 	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pQU_PI_SP, Right: idx(SP), State: pQU_PI_SP, Interm: true})
+	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pQU_SP, Right: idx(SP), State: pQU_SP, Interm: true})
 
 	// LB16: (CL|CP) SP* × NS
 	combinedStates = append(combinedStates, segmenter.ChainRule{
@@ -384,7 +401,7 @@ func genTables() {
 	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pCL_SP, Right: idx(SP), State: pCL_SP, Interm: true})
 
 	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: e(CP),
+		Entry: x(CP),
 		Steps: []segmenter.ChainStep{
 			{Props: p(idx(SP)), State: pCP_SP},
 		},
@@ -393,7 +410,7 @@ func genTables() {
 	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pCP_SP, Right: idx(SP), State: pCP_SP, Interm: true})
 
 	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: e(CP_EA),
+		Entry: x(CP | EastAsian),
 		Steps: []segmenter.ChainStep{
 			{Props: p(idx(SP)), State: pCP_EA_SP},
 		},
@@ -507,7 +524,7 @@ func genTables() {
 		// LB13 (tailored per Example 7): [^NU] × CL/CP/IS/SY, × EX.
 		{Left: nil, Right: allEX, Break: false},
 		{Left: allNU, Right: allClose, Break: true},
-		{Left: nil, Right: e(AnyClose | IS | SY), Break: false},
+		{Left: nil, Right: e(CL | CP | IS | SY), Break: false},
 
 		// LB14: OP SP* × — base rule for zero SPs.
 		{Left: allOP, Right: nil, Break: false},
@@ -540,20 +557,20 @@ func genTables() {
 		{Left: nil, Right: allIN, Break: false},
 
 		// LB23: (AL|HL) × NU, NU × (AL|HL)
-		{Left: allAL_HL, Right: allNU, Break: false},
-		{Left: allNU, Right: allAL_HL, Break: false},
+		{Left: allALLike, Right: allNU, Break: false},
+		{Left: allNU, Right: allALLike, Break: false},
 
 		// LB23a: PR × (ID|EB|EM), (ID|EB|EM) × PO
 		{Left: allPR, Right: allIdeographic, Break: false},
 		{Left: allIdeographic, Right: allPO, Break: false},
 
 		// LB24: (PR|PO) × (AL|HL), (AL|HL) × (PR|PO)
-		{Left: e(PR | PO), Right: allAL_HL, Break: false},
-		{Left: allAL_HL, Right: e(PR | PO), Break: false},
+		{Left: e(PR | PO), Right: allALLike, Break: false},
+		{Left: allALLike, Right: e(PR | PO), Break: false},
 
 		// LB25 (tailored per Example 7):
 		{Left: e(PO | PR), Right: allNU, Break: false},
-		{Left: e(AnyOP | HY), Right: allNU, Break: false},
+		{Left: e(OP | HY), Right: allNU, Break: false},
 		{Left: allNU, Right: e(NU | SY | IS), Break: false},
 		{Left: allNU, Right: e(PO | PR), Break: false},
 
@@ -567,18 +584,18 @@ func genTables() {
 		{Left: allPR, Right: allHangul, Break: false},
 
 		// LB28: (AL|HL) × (AL|HL)
-		{Left: allAL_HL, Right: allAL_HL, Break: false},
+		{Left: allALLike, Right: allALLike, Break: false},
 
 		// LB28a: AP × (AK|AS|VF|VI), (AK|AS|VF|VI) × (AK|VF)
 		{Left: allAP, Right: allAksara, Break: false},
 		{Left: allAksara, Right: allAksaraFinal, Break: false},
 
 		// LB29: IS × (AL|HL)
-		{Left: allIS, Right: allAL_HL, Break: false},
+		{Left: allIS, Right: allALLike, Break: false},
 
 		// LB30: (AL|HL|NU) × OP (non-EA), CP (non-EA) × (AL|HL|NU)
-		{Left: append(e(ALLike|HL|NU), allXX...), Right: e(OP), Break: false},
-		{Left: e(CP), Right: append(e(ALLike|HL|NU), allXX...), Break: false},
+		{Left: append(allALLike, allNU...), Right: x(OP), Break: false},
+		{Left: x(CP), Right: append(allALLike, allNU...), Break: false},
 
 		// LB30b: EB × EM
 		{Left: allEB, Right: allEM, Break: false},
@@ -594,7 +611,7 @@ func genTables() {
 	chainStates := []uint8{
 		pZW_SP,
 		pOP_SP, pOP_EA_SP,
-		pQU_PI_SP,
+		pQU_SP,
 		pCL_SP, pCP_SP, pCP_EA_SP,
 		pB2_SP,
 		pHL_HY,
@@ -634,12 +651,12 @@ func genTables() {
 		return r
 	}()
 
-	lb6_7 := e(MandatoryBreak | ZW | SP)
+	lb6_7 := e(BK | CR | LF | NL | ZW | SP)
 
 	allChains := p(
 		pZW_SP,
 		pOP_SP, pOP_EA_SP,
-		pQU_PI_SP,
+		pQU_SP,
 		pCL_SP, pCP_SP, pCP_EA_SP,
 		pB2_SP,
 		pHL_HY,
@@ -648,14 +665,14 @@ func genTables() {
 	)
 
 	loserChains := p(
-		pQU_PI_SP,
+		pQU_SP,
 		pCL_SP, pCP_SP, pCP_EA_SP,
 		pB2_SP,
 		pRI_RI,
 		pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR,
 	)
 
-	lb13Right := e(AnyClose | EX | IS | SY)
+	lb13Right := e(CL | CP | EX | IS | SY)
 
 	chainOverrides := []chainOverride{
 		{Lefts: allChains, Rights: lb6_7, State: segmenter.Keep},
@@ -663,16 +680,16 @@ func genTables() {
 		{Lefts: loserChains, Rights: allWJ, State: segmenter.Keep},
 		{Lefts: loserChains, Rights: lb13Right, State: segmenter.Keep},
 		{Lefts: p(pOP_SP, pOP_EA_SP), Rights: all, State: segmenter.Keep},
-		{Lefts: p(pQU_PI_SP), Rights: allOP, State: segmenter.Keep},
+		{Lefts: p(pQU_SP), Rights: allOP, State: segmenter.Keep},
 		{Lefts: p(pCL_SP, pCP_SP, pCP_EA_SP), Rights: allNS, State: segmenter.Keep},
 		{Lefts: p(pB2_SP), Rights: allB2, State: segmenter.Keep},
 		{Lefts: p(pHL_HY), Rights: all, State: segmenter.Keep},
 		{Lefts: p(pRI_RI), Rights: allRI, State: segmenter.Break},
 		{Lefts: p(pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR), Rights: allQU, State: segmenter.Keep},
-		{Lefts: p(pNU_Num), Rights: append(e(IN|BA|HY|NS|ALLike|HL|GL|OP), allXX...), State: segmenter.Keep},
-		{Lefts: p(pNU_Close_CP), Rights: append(e(ALLike|HL|NU|IN|BA|HY|NS|GL|BB), allXX...), State: segmenter.Keep},
+		{Lefts: p(pNU_Num), Rights: append(e(IN|BA|HY|NS|AL|SA|Extend|ZWJ|HL|GL|OP), allXX...), State: segmenter.Keep},
+		{Lefts: p(pNU_Close_CP), Rights: append(e(AL|SA|Extend|ZWJ|HL|NU|IN|BA|HY|NS|GL|BB), allXX...), State: segmenter.Keep},
 		{Lefts: p(pNU_Close_CL), Rights: e(IN | BA | HY | NS | GL | BB), State: segmenter.Keep},
-		{Lefts: p(pNU_PR), Rights: e(AnyOP | HY | NU), State: segmenter.Keep},
+		{Lefts: p(pNU_PR), Rights: e(OP | HY | NU), State: segmenter.Keep},
 	}
 
 	// Apply chain override transitions after the wipe.
