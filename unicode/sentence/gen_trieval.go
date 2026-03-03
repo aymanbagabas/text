@@ -6,80 +6,45 @@
 
 package main
 
-// Property indices for sentence break.
-//
-// Base properties 0–14 correspond to Sentence_Break property values from the
-// Unicode Character Database. The gen.go generator assigns these indices when
-// building the property trie.
-//
-// Absorption states (15–23) are synthetic properties created by SB5
-// absorption (X × Extend/Format → X) and SB7 context tracking. These have
-// indices ≤ lastCodepointProperty, so the engine advances the marker past
-// each absorbed character.
-//
-// Chain states (24–30) implement multi-character rules SB8–SB11 using
-// the engine's combined-state mechanism. Chain state rows default to NoMatch
-// so that unmatched transitions cause the engine to rewind to the marker
-// position (the SB11 break point).
-//
-// SOT and EOT are virtual properties for start-of-text and end-of-text.
+// Class is a bitflag type for sentence break properties.
+// Each base property occupies one bit. The zero value represents Other.
+type Class uint16
 
-// Base properties from UCD.
+// Base property bitflags for sentence break.
+//
+// Each property occupies one bit in a Class value. The zero value
+// represents Other (SB=Other) — the default property for codepoints
+// with no specific class.
+//
+// SB5 absorption states, chain states, and virtual properties are
+// NOT bitflags — they are uint8 indices assigned after flattening,
+// used by the state machine.
 const (
-	pOther     uint8 = iota // SB=Other
-	pCR                     // SB=CR
-	pLF                     // SB=LF
-	pSep                    // SB=Sep
-	pExtend                 // SB=Extend
-	pFormat                 // SB=Format
-	pSp                     // SB=Sp
-	pLower                  // SB=Lower
-	pUpper                  // SB=Upper
-	pOLetter                // SB=OLetter
-	pNumeric                // SB=Numeric
-	pATerm                  // SB=ATerm
-	pSTerm                  // SB=STerm
-	pSContinue              // SB=SContinue
-	pClose                  // SB=Close
+	Other Class = 0 // SB=Other — zero value, no bits set
 
-	lastBaseProperty = pClose
+	CR        Class = 1 << iota // SB=CR
+	LF                          // SB=LF
+	Sep                         // SB=Sep
+	Extend                      // SB=Extend
+	Format                      // SB=Format
+	Sp                          // SB=Sp
+	Lower                       // SB=Lower
+	Upper                       // SB=Upper
+	OLetter                     // SB=OLetter
+	Numeric                     // SB=Numeric
+	ATerm                       // SB=ATerm
+	STerm                       // SB=STerm
+	SContinue                   // SB=SContinue
+	Close                       // SB=Close
 )
 
-// Absorption states: base property after absorbing Extend/Format (SB5).
-// Indices ≤ lastCodepointProperty so the engine moves the marker.
-const (
-	pLower_XX   uint8 = lastBaseProperty + 1 + iota // Lower after absorbing Extend/Format
-	pUpper_XX                                        // Upper after absorbing Extend/Format
-	pOLetter_XX                                      // OLetter after absorbing Extend/Format
-	pNumeric_XX                                      // Numeric after absorbing Extend/Format
-	pATerm_XX                                        // ATerm after absorbing Extend/Format
-	pSTerm_XX                                        // STerm after absorbing Extend/Format
-	pSCont_XX                                        // SContinue after absorbing Extend/Format
-	pClose_XX                                        // Close after absorbing Extend/Format
+// allBaseProperties is the OR of all base property bits.
+const allBaseProperties = CR | LF | Sep | Extend | Format | Sp |
+	Lower | Upper | OLetter | Numeric | ATerm | STerm | SContinue | Close
 
-	// SB7 context: (Upper|Lower) × ATerm → pUL_ATerm.
-	// Absorption state (≤ lastCodepointProperty) so the engine advances the
-	// marker past the ATerm.
-	pUL_ATerm
+// ParaSep groups paragraph separator properties.
+const ParaSep = Sep | CR | LF
 
-	lastCodepointProperty = pUL_ATerm
-)
-
-// Chain states for multi-character rules SB8–SB11 and virtual properties.
-const (
-	// ATerm chain: ATerm Close* Sp* (SB9/SB10/SB11/SB8)
-	pATerm_Close uint8 = lastCodepointProperty + 1 + iota // ATerm Close*
-	pATerm_Sp                                              // ATerm Close* Sp*
-	pATerm_Scan                                            // ATerm Close* Sp* (scan chars)* — SB8 forward scan
-	pATerm_Para                                            // ATerm Close* Sp* ParaSep — SB11 pending
-
-	// STerm chain: STerm Close* Sp* (SB9/SB10/SB11)
-	pSTerm_Close // STerm Close*
-	pSTerm_Sp    // STerm Close* Sp*
-	pSTerm_Para  // STerm Close* Sp* ParaSep — SB11 pending
-
-	// Virtual properties.
-	pSOT      // start of text
-	pEOT      // end of text
-	propCount // total number of properties (= stride)
-)
+// SATerm groups sentence-terminator properties (base only).
+// For expanded SATerm including absorption states, see gen.go.
+const SATerm = ATerm | STerm
