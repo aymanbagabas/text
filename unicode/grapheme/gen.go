@@ -9,7 +9,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"math/bits"
 	"unicode"
 
 	"golang.org/x/text/internal/gen"
@@ -41,46 +40,11 @@ func main() {
 	genTables()
 }
 
-// addAllBaseProperties registers Other (zero) and all single-bit properties
-// from allBits with the flattener, returning the total count registered.
-func addAllBaseProperties(flat *segmenter.Flattener[Class], allBits Class) int {
-	flat.Add(0) // Other
-	for remaining := allBits; remaining != 0; {
-		bit := Class(1) << uint(bits.TrailingZeros32(uint32(remaining)))
-		flat.Add(bit)
-		remaining &^= bit
-	}
-	return flat.Len()
-}
-
-// classRule describes a break rule using Class bitflags.
-// Zero Left/Right means "Any".
-type classRule struct {
-	Left, Right Class
-	Break       bool
-}
-
-// flattenRules converts classRules to segmenter.Rule slices using the flattener.
-func flattenRules(flat *segmenter.Flattener[Class], rules []classRule) []segmenter.Rule {
-	var out []segmenter.Rule
-	for _, cr := range rules {
-		r := segmenter.Rule{Break: cr.Break}
-		if cr.Left != 0 {
-			r.Left = flat.Expand(func(c Class) bool { return c&cr.Left != 0 })
-		}
-		if cr.Right != 0 {
-			r.Right = flat.Expand(func(c Class) bool { return c&cr.Right != 0 })
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
 func genTables() {
 	// --- Flattener setup ---
 	// Register all base properties. No modifiers for grapheme.
 	flat := segmenter.NewFlattener[Class]()
-	numBase := addAllBaseProperties(flat, allBaseProperties) // 18 (Other + 17 base properties)
+	numBase := flat.AddAllBaseProperties(allBaseProperties) // 18 (Other + 17 base properties)
 
 	// Combined state indices (assigned above base properties).
 	pRI_RI := uint8(numBase)
@@ -163,7 +127,7 @@ func genTables() {
 	// Step 5: Build and write the break state table.
 
 	// Flatten ClassRules to uint8-based Rules.
-	flatRules := flattenRules(flat, classRules)
+	flatRules := flat.FlattenRules(classRules)
 
 	// Build the full rule list with virtual and combined-state rules.
 	rules := []segmenter.Rule{
@@ -248,7 +212,7 @@ func writeProps(lastCodepointProperty, pSOT, pEOT, propCount uint8) {
 	fmt.Fprintf(w, ")\n")
 }
 
-var classRules = []classRule{
+var classRules = []segmenter.ClassRule[Class]{
 	{Left: CR, Right: LF, Break: false},                           // GB3
 	{Left: Control | CR | LF, Break: true},                        // GB4
 	{Right: Control | CR | LF, Break: true},                       // GB5
