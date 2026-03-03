@@ -87,17 +87,35 @@ func genTables() {
 	flat.Add(CP | EastAsian) // East Asian close parenthesis
 	flat.Add(QU | Pi)        // Quotation with gc=Pi
 	flat.Add(QU | Pf)        // Quotation with gc=Pf
+	flat.Add(ID | ExtPict)   // Ideographic + Extended_Pictographic
+	flat.Add(AL | ExtPict)   // Alphabetic + Extended_Pictographic
+	flat.Add(NS | ExtPict)   // Nonstarter + Extended_Pictographic
+	flat.Add(EX | ExtPict)   // Exclamation + Extended_Pictographic
 
 	idx := flat.Index
 
 	// --- LB9 absorption states ---
-	// For each registered key that participates in LB9, assign a _XX state.
-	// Excluded: BK, CR, LF, NL, SP, ZW, Extend, ZWJ (never absorbers).
-	// Trait flags (EastAsian, Pi, Pf) are NOT in this mask — multi-bit keys
-	// like OP|EastAsian still participate in LB9 via their base property.
+	// Every registered key that participates in LB9 gets an _XX state
+	// (Extend absorbed). Only ExtPict-capable properties additionally
+	// get a _ZWJ state (ZWJ absorbed), used by the emoji ZWJ rule.
+	// This keeps total states under the 120 Index-state limit.
+	//
+	// Excluded from LB9: BK, CR, LF, NL, SP, ZW, Extend, ZWJ.
 	const lb9Excluded = BK | CR | LF | NL | SP | ZW | Extend | ZWJ
-	xxOfMap := make(map[Class]uint8) // registered key → absorption state index
-	nextIdx := uint8(flat.Len())     // starts after all registered keys
+	xxOfMap := make(map[Class]uint8)  // registered key → _XX state index
+	zwjOfMap := make(map[Class]uint8) // registered key → _ZWJ state index
+	nextIdx := uint8(flat.Len())      // starts after all registered keys
+
+	// Properties that can be the base before ZWJ in emoji ZWJ sequences.
+	// Only these get dedicated _ZWJ states; others route ZWJ → _XX.
+	zwjEligible := map[Class]bool{
+		EB:          true,
+		ID | ExtPict: true,
+		AL | ExtPict: true,
+		NS | ExtPict: true,
+		EX | ExtPict: true,
+	}
+
 	for _, cls := range flat.Keys() {
 		if cls == 0 { // XX handled separately below
 			continue
@@ -107,12 +125,29 @@ func genTables() {
 		}
 		xxOfMap[cls] = nextIdx
 		nextIdx++
+		if zwjEligible[cls] {
+			zwjOfMap[cls] = nextIdx
+			nextIdx++
+		}
 	}
 	// XX also absorbs (LB10: unattached Extend/ZWJ → AL behavior).
 	xxOfMap[XX] = nextIdx
 	nextIdx++
+	zwjOfMap[XX] = nextIdx
+	nextIdx++
 
 	lastCodepointProperty := nextIdx - 1
+
+	// allZWJStates collects all _ZWJ absorption state indices.
+	var allZWJStates []uint8
+	for _, cls := range flat.Keys() {
+		if zwj, ok := zwjOfMap[cls]; ok {
+			allZWJStates = append(allZWJStates, zwj)
+		}
+	}
+	if zwj, ok := zwjOfMap[XX]; ok {
+		allZWJStates = append(allZWJStates, zwj)
+	}
 
 	// expandAll returns the uint8 indices of all registered keys
 	// matching mask, plus their LB9 absorption states (if any).
@@ -130,6 +165,9 @@ func genTables() {
 			r = append(r, idx(cls))
 			if xx, ok := xxOfMap[cls]; ok {
 				r = append(r, xx)
+			}
+			if zwj, ok := zwjOfMap[cls]; ok {
+				r = append(r, zwj)
 			}
 		}
 		return r
@@ -215,9 +253,11 @@ func genTables() {
 	})
 
 	// Step 4: Parse Extended_Pictographic from emoji-data.txt.
+	extPictSet := make(map[rune]bool)
 	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(p *ucd.Parser) {
 		if p.String(1) == "Extended_Pictographic" {
 			r := p.Rune(0)
+			extPictSet[r] = true
 			if gc[r] == "" {
 				props[r] = idx(EB)
 			}
@@ -251,6 +291,19 @@ func genTables() {
 		case idx(CJ):
 			// In normal (default) strictness, CJ resolves to NS.
 			props[r] = idx(NS)
+		}
+		// Apply ExtPict trait to codepoints that are Extended_Pictographic.
+		if extPictSet[r] {
+			switch props[r] {
+			case idx(ID):
+				props[r] = idx(ID | ExtPict)
+			case idx(AL):
+				props[r] = idx(AL | ExtPict)
+			case idx(NS):
+				props[r] = idx(NS | ExtPict)
+			case idx(EX):
+				props[r] = idx(EX | ExtPict)
+			}
 		}
 	}
 
@@ -287,11 +340,14 @@ func genTables() {
 	e := expandAll
 	allXX := e(0) // XX + pXX_XX (zero value can't be expressed in bitflag masks)
 
-	// x returns the exact index + absorption state for a single registered key.
+	// x returns the exact index + absorption states for a single registered key.
 	x := func(cls Class) []uint8 {
 		r := []uint8{idx(cls)}
 		if xx, ok := xxOfMap[cls]; ok {
 			r = append(r, xx)
+		}
+		if zwj, ok := zwjOfMap[cls]; ok {
+			r = append(r, zwj)
 		}
 		return r
 	}
@@ -314,6 +370,7 @@ func genTables() {
 	allPO := e(PO)
 	allEB := e(EB)
 	allEM := e(EM)
+	allExtPict := append(e(ExtPict), allEB...) // ID|ExtPict, AL|ExtPict, NS|ExtPict, EX|ExtPict + EB
 	allIS := e(IS)
 	allSY := e(SY)
 	allBB := e(BB)
@@ -337,16 +394,32 @@ func genTables() {
 	allIdeographic := e(ID | EB | EM)
 
 	// --- LB9 absorption ---
+	// Extend absorption → _XX state; ZWJ absorption → _ZWJ state (if available)
+	// or _XX state (for properties without a dedicated _ZWJ state).
 	lb9Ignored := p(idx(Extend), idx(ZWJ))
+	idxZWJ := idx(ZWJ)
 
 	var combinedStates []segmenter.CombinedState
 
 	for cls, xx := range xxOfMap {
 		xx := xx // capture for closure
+		zwjTarget := xx
+		if zwj, ok := zwjOfMap[cls]; ok {
+			zwjTarget = zwj
+		}
+		props := p(idx(cls), xx)
+		if zwj, ok := zwjOfMap[cls]; ok {
+			props = append(props, zwj)
+		}
 		combinedStates = append(combinedStates, segmenter.IgnoreRule{
-			Props:   p(idx(cls), xx),
+			Props:   props,
 			Ignored: lb9Ignored,
-			Target:  func(_, _ uint8) uint8 { return xx },
+			Target: func(_, ign uint8) uint8 {
+				if ign == idxZWJ {
+					return zwjTarget
+				}
+				return xx
+			},
 		}.Expand()...)
 	}
 
@@ -509,6 +582,11 @@ func genTables() {
 
 		// LB8a: ZWJ × — keep after ZWJ.
 		{Left: p(idx(ZWJ)), Right: nil, Break: false},
+
+		// Emoji ZWJ sequences: _ZWJ × ExtPict — don't break after
+		// absorbed ZWJ when followed by Extended_Pictographic.
+		// This mirrors WB3c/GB11 from other segmenters.
+		{Left: allZWJStates, Right: allExtPict, Break: false},
 
 		// LB11: × WJ, WJ ×
 		{Left: nil, Right: allWJ, Break: false},

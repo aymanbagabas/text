@@ -81,6 +81,7 @@ const (
 	EastAsian // EastAsianWidth ∈ {F, H, W}
 	Pi        // GeneralCategory = Pi (Initial Punctuation)
 	Pf        // GeneralCategory = Pf (Final Punctuation)
+	ExtPict   // Extended_Pictographic (emoji/emoji-data.txt)
 
 	// LB9/LB10 transparent properties.
 	Extend // Extend (GCB=Extend, absorbed by LB9)

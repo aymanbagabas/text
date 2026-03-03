@@ -342,6 +342,39 @@ func TestLB9Absorption(t *testing.T) {
 	}
 }
 
+// TestEmojiZWJ verifies that emoji ZWJ sequences are not broken across lines.
+//
+// Both icu4x and uniseg keep entire ZWJ sequences together by respecting
+// extended grapheme cluster boundaries during line breaking. We should match.
+func TestEmojiZWJ(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"family", "👨\u200d👩\u200d👧\u200d👦", []string{"👨\u200d👩\u200d👧\u200d👦"}},
+		{"technologist", "🧑\u200d💻", []string{"🧑\u200d💻"}},
+		{"couple_with_heart", "👩\u200d❤\ufe0f\u200d👨", []string{"👩\u200d❤\ufe0f\u200d👨"}},
+		{"rainbow_flag", "🏳\ufe0f\u200d🌈", []string{"🏳\ufe0f\u200d🌈"}},
+		{"two_families", "👨\u200d👩\u200d👧\u200d👦👨\u200d👩\u200d👧\u200d👦",
+			[]string{"👨\u200d👩\u200d👧\u200d👦", "👨\u200d👩\u200d👧\u200d👦"}},
+		{"family_then_space_text", "👨\u200d👩\u200d👧\u200d👦 hello",
+			[]string{"👨\u200d👩\u200d👧\u200d👦 ", "hello"}},
+		{"emoji_zwj_space_emoji_zwj", "🧑\u200d💻 🧑\u200d💻",
+			[]string{"🧑\u200d💻 ", "🧑\u200d💻"}},
+		{"thumbsup_skin_tone", "👍🏽", []string{"👍🏽"}},
+		{"AL_ZWJ_AL_no_break", "a\u200db", []string{"a\u200db"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
+			}
+		})
+	}
+}
+
 // TestCJK verifies ideographic break opportunities (LB31 default break).
 func TestCJK(t *testing.T) {
 	tests := []struct {

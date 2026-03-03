@@ -3,10 +3,10 @@
 package line
 
 const (
-	propCount             uint8 = 108
-	lastCodepointProperty uint8 = 91
-	pSOT                  uint8 = 106
-	pEOT                  uint8 = 107
+	propCount             uint8 = 122
+	lastCodepointProperty uint8 = 105
+	pSOT                  uint8 = 120
+	pEOT                  uint8 = 121
 	pSA                   uint8 = 41
 
 	pBK uint8 = 1
