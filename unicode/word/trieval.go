@@ -2,70 +2,50 @@
 
 package word
 
-// Property indices for word break.
+// Class is a bitflag type for word break properties.
+// Each base property occupies one bit. The zero value represents Other.
+type Class uint32
+
+// Base property bitflags for word break.
 //
-// Base properties 0–19 correspond to Word_Break property values from the
-// Unicode Character Database, with the addition of Extended_Pictographic
-// (needed for WB3c). The gen.go generator assigns these indices when
-// building the property trie.
+// Each property occupies one bit in a Class value. The zero value
+// represents Other (WB=Other) — the default property for codepoints
+// with no specific class.
 //
-// Absorption states (_ZWJ variants, WSegSpace_XX) implement WB4.
-// They have indices ≤ lastCodepointProperty, so the engine advances
-// the marker past each absorbed character.
-//
-// Lookahead states implement multi-character rules: WB6/7, WB7b/7c,
-// WB11/12, and WB15/16. These have indices > lastCodepointProperty,
-// so the engine does NOT advance the marker on entry — NoMatch rewinds.
-//
-// SOT and EOT are virtual properties for start-of-text and end-of-text.
+// WB4 absorption states, lookahead states, and virtual properties are
+// NOT bitflags — they are uint8 indices assigned after flattening,
+// used by the state machine.
 const (
-	pOther             uint8 = iota // WB=Other
-	pCR                             // WB=CR
-	pLF                             // WB=LF
-	pNewline                        // WB=Newline
-	pExtend                         // WB=Extend
-	pZWJ                            // WB=ZWJ
-	pFormat                         // WB=Format
-	pRegionalIndicator              // WB=Regional_Indicator
-	pKatakana                       // WB=Katakana
-	pHebrewLetter                   // WB=Hebrew_Letter
-	pALetter                        // WB=ALetter
-	pSingleQuote                    // WB=Single_Quote
-	pDoubleQuote                    // WB=Double_Quote
-	pMidLetter                      // WB=MidLetter
-	pMidNum                         // WB=MidNum
-	pMidNumLet                      // WB=MidNumLet
-	pNumeric                        // WB=Numeric
-	pExtendNumLet                   // WB=ExtendNumLet
-	pExtPict                        // Extended_Pictographic=Yes
-	pWSegSpace                      // WB=WSegSpace
-	lastBaseProperty   = pWSegSpace
+	Other Class = 0 // WB=Other — zero value, no bits set
+
+	CR           Class = 1 << iota // WB=CR
+	LF                             // WB=LF
+	Newline                        // WB=Newline
+	Extend                         // WB=Extend
+	ZWJ                            // WB=ZWJ
+	Format                         // WB=Format
+	RI                             // WB=Regional_Indicator
+	Katakana                       // WB=Katakana
+	HebrewLetter                   // WB=Hebrew_Letter
+	ALetter                        // WB=ALetter
+	SingleQuote                    // WB=Single_Quote
+	DoubleQuote                    // WB=Double_Quote
+	MidLetter                      // WB=MidLetter
+	MidNum                         // WB=MidNum
+	MidNumLet                      // WB=MidNumLet
+	Numeric                        // WB=Numeric
+	ExtendNumLet                   // WB=ExtendNumLet
+	ExtPict                        // Extended_Pictographic=Yes
+	WSegSpace                      // WB=WSegSpace
 )
 
-// WB4 absorption states. _XX means Extend/Format was absorbed (WSegSpace
-// loses WB3d eligibility). _ZWJ means ZWJ was the most recent absorbed
-// character (needed for WB3c).
-const (
-	pWSegSpace_XX uint8 = lastBaseProperty + 1 + iota
-	pALetter_ZWJ
-	pHebrewLetter_ZWJ
-	pNumeric_ZWJ
-	pKatakana_ZWJ
-	pExtendNumLet_ZWJ
-	pRegionalIndicator_ZWJ
-	pExtPict_ZWJ
-	pWSegSpace_ZWJ
-	lastCodepointProperty = pWSegSpace_ZWJ
-)
+// allBaseProperties is the OR of all base property bits.
+const allBaseProperties = CR | LF | Newline | Extend | ZWJ | Format | RI |
+	Katakana | HebrewLetter | ALetter | SingleQuote | DoubleQuote |
+	MidLetter | MidNum | MidNumLet | Numeric | ExtendNumLet | ExtPict | WSegSpace
 
-// Lookahead and virtual property states.
+// Natural groupings using OR — replaces ad-hoc p() helpers.
 const (
-	pAHL_MidLetter uint8 = lastCodepointProperty + 1 + iota // AHLetter × (MidLetter|MidNumLetQ) (WB6/7)
-	pHL_MidLetter                                           // HebrewLetter × (MidLetter|MidNumLetQ) (WB6/7)
-	pNum_MidNum                                             // Numeric × (MidNum|MidNumLetQ) (WB11/12)
-	pHL_DQ                                                  // HebrewLetter × Double_Quote (WB7b/7c)
-	pRI_RI                                                  // RI × RI pair consumed (WB15/16)
-	pSOT                                                    // start of text
-	pEOT                                                    // end of text
-	propCount                                               // total property count (stride)
+	AHLetter   = ALetter | HebrewLetter
+	MidNumLetQ = MidNumLet | SingleQuote
 )
