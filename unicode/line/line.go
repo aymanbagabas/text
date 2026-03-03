@@ -60,3 +60,11 @@ func (l *Segmenter) Text() string { return l.s.Text() }
 
 // Position returns the byte offsets [start, end) of the current segment.
 func (l *Segmenter) Position() (start, end int) { return l.s.Position() }
+
+// MustBreak returns whether there is a mandatory break at the current
+// position. This is true for hard line breaks such as U+000A (LF) and U+000D
+// (CR), but not for soft line breaks such as spaces.
+func (l *Segmenter) MustBreak() bool {
+	p := l.s.BoundaryProperty()
+	return p == pBK || p == pCR || p == pLF || p == pNL
+}

@@ -8,4 +8,9 @@ const (
 	pSOT                  uint8 = 106
 	pEOT                  uint8 = 107
 	pSA                   uint8 = 41
+
+	pBK uint8 = 1
+	pCR uint8 = 2
+	pLF uint8 = 3
+	pNL uint8 = 4
 )

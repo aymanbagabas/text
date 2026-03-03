@@ -732,5 +732,10 @@ func writeProps(idx func(Class) uint8, lastCodepointProperty, pSOT, pEOT, propCo
 	fmt.Fprintf(w, "\tpSOT                  uint8 = %d\n", pSOT)
 	fmt.Fprintf(w, "\tpEOT                  uint8 = %d\n", pEOT)
 	fmt.Fprintf(w, "\tpSA                   uint8 = %d\n", idx(SA))
+	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "\tpBK uint8 = %d\n", idx(BK))
+	fmt.Fprintf(w, "\tpCR uint8 = %d\n", idx(CR))
+	fmt.Fprintf(w, "\tpLF uint8 = %d\n", idx(LF))
+	fmt.Fprintf(w, "\tpNL uint8 = %d\n", idx(NL))
 	fmt.Fprintf(w, ")\n")
 }
