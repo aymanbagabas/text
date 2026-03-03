@@ -4,17 +4,31 @@
 
 package segmenter
 
-// Flattener maps keys of type K to uint8 indices for the state table.
-// Each unique key gets a distinct uint8 index. K is typically a bitflag
-// type (e.g. uint64) but can be any comparable type.
-type Flattener[K comparable] struct {
+import "math/bits"
+
+// Bitflag is the constraint for bitflag Class types used by segmenter
+// code generators. Each base property occupies one bit.
+type Bitflag interface {
+	~uint16 | ~uint32
+}
+
+// ClassRule describes a break rule using bitflag Class types.
+// Zero Left/Right means "Any".
+type ClassRule[K Bitflag] struct {
+	Left, Right K
+	Break       bool
+}
+
+// Flattener maps bitflag keys of type K to uint8 indices for the state table.
+// Each unique key gets a distinct uint8 index.
+type Flattener[K Bitflag] struct {
 	keys      map[K]uint8
 	ordered   []K
 	nextIndex uint8
 }
 
-// NewFlattener creates a Flattener for keys of type K.
-func NewFlattener[K comparable]() *Flattener[K] {
+// NewFlattener creates a Flattener for bitflag Class types.
+func NewFlattener[K Bitflag]() *Flattener[K] {
 	return &Flattener[K]{
 		keys: make(map[K]uint8),
 	}
@@ -74,4 +88,34 @@ func (f *Flattener[K]) Keys() []K {
 	result := make([]K, len(f.ordered))
 	copy(result, f.ordered)
 	return result
+}
+
+// AddAllBaseProperties registers Other (zero) and all single-bit properties
+// from allBits, iterating bits LSB-first for deterministic index assignment.
+// It returns the total number of registered keys.
+func (f *Flattener[K]) AddAllBaseProperties(allBits K) int {
+	f.Add(0) // any i.e. Other and XX properties
+	for remaining := allBits; remaining != 0; {
+		bit := K(1) << uint(bits.TrailingZeros64(uint64(remaining)))
+		f.Add(bit)
+		remaining &^= bit
+	}
+	return f.Len()
+}
+
+// FlattenRules converts ClassRules to Rule slices using the flattener's
+// Expand method to map bitmask predicates to uint8 index slices.
+func (f *Flattener[K]) FlattenRules(rules []ClassRule[K]) []Rule {
+	var out []Rule
+	for _, cr := range rules {
+		r := Rule{Break: cr.Break}
+		if cr.Left != 0 {
+			r.Left = f.Expand(func(c K) bool { return c&cr.Left != 0 })
+		}
+		if cr.Right != 0 {
+			r.Right = f.Expand(func(c K) bool { return c&cr.Right != 0 })
+		}
+		out = append(out, r)
+	}
+	return out
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // flag is a local bitflag type used to test the generic Flattener.
-type flag uint64
+type flag uint32
 
 func TestFlattenerBasic(t *testing.T) {
 	const (
@@ -137,24 +137,74 @@ func TestFlattenerIndexPanic(t *testing.T) {
 	f.Index(A)
 }
 
-func TestFlattenerStringKey(t *testing.T) {
-	f := NewFlattener[string]()
-	f.Add("CR")
-	f.Add("LF")
-	f.Add("Control")
+func TestAddAllBaseProperties(t *testing.T) {
+	const (
+		CR      flag = 1 << iota
+		LF
+		Control
+		Extend
+	)
+	allBits := CR | LF | Control | Extend
 
-	if f.Index("CR") != 0 {
-		t.Errorf("CR: got %d; want 0", f.Index("CR"))
+	f := NewFlattener[flag]()
+	n := f.AddAllBaseProperties(allBits)
+
+	if n != 5 {
+		t.Errorf("AddAllBaseProperties: got %d; want 5", n)
 	}
-	if f.Index("LF") != 1 {
-		t.Errorf("LF: got %d; want 1", f.Index("LF"))
+	if f.Index(0) != 0 {
+		t.Errorf("Other: got %d; want 0", f.Index(0))
 	}
-	if f.Len() != 3 {
-		t.Errorf("Len: got %d; want 3", f.Len())
+	if f.Index(CR) != 1 {
+		t.Errorf("CR: got %d; want 1", f.Index(CR))
+	}
+	if f.Index(Extend) != 4 {
+		t.Errorf("Extend: got %d; want 4", f.Index(Extend))
+	}
+}
+
+func TestFlattenRules(t *testing.T) {
+	const (
+		CR      flag = 1 << iota
+		LF
+		Control
+	)
+
+	f := NewFlattener[flag]()
+	f.AddAllBaseProperties(CR | LF | Control)
+
+	rules := []ClassRule[flag]{
+		{Left: CR, Right: LF, Break: false},
+		{Left: Control | CR | LF, Break: true},
+		{Break: true},
 	}
 
-	got := f.Expand(func(s string) bool { return s == "CR" || s == "LF" })
-	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
-		t.Errorf("Expand: got %v; want [0 1]", got)
+	flat := f.FlattenRules(rules)
+	if len(flat) != 3 {
+		t.Fatalf("FlattenRules: got %d rules; want 3", len(flat))
+	}
+
+	// Rule 0: CR × LF
+	if len(flat[0].Left) != 1 || flat[0].Left[0] != f.Index(CR) {
+		t.Errorf("rule 0 Left: got %v; want [%d]", flat[0].Left, f.Index(CR))
+	}
+	if len(flat[0].Right) != 1 || flat[0].Right[0] != f.Index(LF) {
+		t.Errorf("rule 0 Right: got %v; want [%d]", flat[0].Right, f.Index(LF))
+	}
+
+	// Rule 1: Control|CR|LF ÷ (any)
+	if len(flat[1].Left) != 3 {
+		t.Errorf("rule 1 Left: got %d entries; want 3", len(flat[1].Left))
+	}
+	if flat[1].Right != nil {
+		t.Errorf("rule 1 Right: got %v; want nil", flat[1].Right)
+	}
+
+	// Rule 2: Any ÷ Any
+	if flat[2].Left != nil || flat[2].Right != nil {
+		t.Errorf("rule 2: expected nil Left/Right")
+	}
+	if !flat[2].Break {
+		t.Errorf("rule 2: expected Break=true")
 	}
 }
