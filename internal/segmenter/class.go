@@ -9,7 +9,7 @@ import "math/bits"
 // Bitflag is the constraint for bitflag Class types used by segmenter
 // code generators. Each base property occupies one bit.
 type Bitflag interface {
-	~uint16 | ~uint32
+	~uint16 | ~uint32 | ~uint64
 }
 
 // ClassRule describes a break rule using bitflag Class types.

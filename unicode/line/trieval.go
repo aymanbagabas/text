@@ -2,163 +2,125 @@
 
 package line
 
-// Property indices for line break (UAX #14).
-//
-// Base properties 0–37 correspond to Line_Break property values from the
-// Unicode Character Database. Synthetic properties 38–43 combine Line_Break
-// class with East_Asian_Width or General_Category for rules that depend on
-// more than just the base class (LB30, LB15a/15b).
-//
-// LB9 absorption states (44–55) implement LB9/LB10: X (Extend|ZWJ)* → X.
-// These have indices ≤ lastCodepointProperty, so the engine advances the
-// marker past each absorbed character.
-//
-// Chain/lookahead states (56+) implement multi-character rules: LB8, LB14,
-// LB15b, LB16, LB17, LB21a, and LB30a. Rows for chain states default to
-// NoMatch so the engine rewinds on non-matching transitions.
-//
-// SOT and EOT are virtual properties for start-of-text and end-of-text.
+// Class is a bitflag type for line break properties.
+// Each base property occupies one bit. The zero value represents XX (Unknown).
+type Class uint64
 
-// Base Line_Break properties from UCD.
+// Base property bitflags for line break (UAX #14).
+//
+// Each property occupies one bit in a Class value. The zero value
+// represents XX (LB=XX) — the default property for codepoints
+// with no specific class.
+//
+// LB9 absorption states, chain states, and virtual properties are
+// NOT bitflags — they are uint8 indices assigned after flattening,
+// used by the state machine.
 const (
-	pXX uint8 = iota // LB=XX (Unknown / default)
-	pBK              // LB=BK (Mandatory Break)
-	pCR              // LB=CR (Carriage Return)
-	pLF              // LB=LF (Line Feed)
-	pNL              // LB=NL (Next Line)
-	pSP              // LB=SP (Space)
-	pZW              // LB=ZW (Zero Width Space)
-	pWJ              // LB=WJ (Word Joiner)
-	pGL              // LB=GL (Non-breaking / Glue)
-	pCL              // LB=CL (Close Punctuation)
-	pEX              // LB=EX (Exclamation/Interrogation)
-	pIS              // LB=IS (Infix Numeric Separator)
-	pSY              // LB=SY (Symbols Allowing Break After)
-	pOP              // LB=OP (Open Punctuation, non-EA)
-	pQU              // LB=QU (Quotation, non-Pi/Pf)
-	pNS              // LB=NS (Nonstarter)
-	pHY              // LB=HY (Hyphen)
-	pBA              // LB=BA (Break After)
-	pBB              // LB=BB (Break Before)
-	pB2              // LB=B2 (Break Opportunity Before and After)
-	pIN              // LB=IN (Inseparable)
-	pAL              // LB=AL (Alphabetic, non-EA)
-	pNU              // LB=NU (Numeric)
-	pPR              // LB=PR (Prefix Numeric)
-	pPO              // LB=PO (Postfix Numeric)
-	pID              // LB=ID (Ideographic)
-	pEB              // LB=EB (Emoji Base)
-	pEM              // LB=EM (Emoji Modifier)
-	pCB              // LB=CB (Contingent Break)
-	pRI              // LB=RI (Regional Indicator)
-	pSA              // LB=SA (Complex Context / South Asian)
-	pHL              // LB=HL (Hebrew Letter)
-	pCJ              // LB=CJ (Conditional Japanese Starter)
-	pAK              // LB=AK (Aksara)
-	pAP              // LB=AP (Aksara Pre-base)
-	pAS              // LB=AS (Aksara Start)
-	pVF              // LB=VF (Virama Final)
-	pVI              // LB=VI (Virama)
+	XX Class = 0 // LB=XX (Unknown / default) — zero value, no bits set
+
+	BK Class = 1 << iota // LB=BK (Mandatory Break)
+	CR                   // LB=CR (Carriage Return)
+	LF                   // LB=LF (Line Feed)
+	NL                   // LB=NL (Next Line)
+	SP                   // LB=SP (Space)
+	ZW                   // LB=ZW (Zero Width Space)
+	WJ                   // LB=WJ (Word Joiner)
+	GL                   // LB=GL (Non-breaking / Glue)
+	CL                   // LB=CL (Close Punctuation)
+	EX                   // LB=EX (Exclamation/Interrogation)
+	IS                   // LB=IS (Infix Numeric Separator)
+	SY                   // LB=SY (Symbols Allowing Break After)
+	OP                   // LB=OP (Open Punctuation, non-EA)
+	QU                   // LB=QU (Quotation, non-Pi/Pf)
+	NS                   // LB=NS (Nonstarter)
+	HY                   // LB=HY (Hyphen)
+	BA                   // LB=BA (Break After)
+	BB                   // LB=BB (Break Before)
+	B2                   // LB=B2 (Break Opportunity Before and After)
+	IN                   // LB=IN (Inseparable)
+	AL                   // LB=AL (Alphabetic)
+	NU                   // LB=NU (Numeric)
+	PR                   // LB=PR (Prefix Numeric)
+	PO                   // LB=PO (Postfix Numeric)
+	ID                   // LB=ID (Ideographic)
+	EB                   // LB=EB (Emoji Base)
+	EM                   // LB=EM (Emoji Modifier)
+	CB                   // LB=CB (Contingent Break)
+	RI                   // LB=RI (Regional Indicator)
+	SA                   // LB=SA (Complex Context / South Asian)
+	HL                   // LB=HL (Hebrew Letter)
+	CJ                   // LB=CJ (Conditional Japanese Starter)
+	AK                   // LB=AK (Aksara)
+	AP                   // LB=AP (Aksara Pre-base)
+	AS                   // LB=AS (Aksara Start)
+	VF                   // LB=VF (Virama Final)
+	VI                   // LB=VI (Virama)
 
 	// Hangul properties (LB26/LB27).
-	pJL // LB=JL (Hangul L Jamo)
-	pJV // LB=JV (Hangul V Jamo)
-	pJT // LB=JT (Hangul T Jamo)
-	pH2 // LB=H2 (Hangul LV Syllable)
-	pH3 // LB=H3 (Hangul LVT Syllable)
+	JL // LB=JL (Hangul L Jamo)
+	JV // LB=JV (Hangul V Jamo)
+	JT // LB=JT (Hangul T Jamo)
+	H2 // LB=H2 (Hangul LV Syllable)
+	H3 // LB=H3 (Hangul LVT Syllable)
 
 	// Synthetic properties (LineBreak + EastAsianWidth/GeneralCategory).
-	pOP_EA // OP with ea=F/H/W (East Asian Open Punctuation)
-	pCP    // CP (Close Punctuation, non-EA)
-	pCP_EA // CP with ea=F/H/W (East Asian Close Punctuation)
-	pQU_PI // QU with gc=Pi (Initial Quotation)
-	pQU_PF // QU with gc=Pf (Final Quotation)
+	OP_EA // OP with ea=F/H/W (East Asian Open Punctuation)
+	CP    // CP (Close Punctuation, non-EA)
+	CP_EA // CP with ea=F/H/W (East Asian Close Punctuation)
+	QU_PI // QU with gc=Pi (Initial Quotation)
+	QU_PF // QU with gc=Pf (Final Quotation)
 
 	// LB9/LB10 transparent properties.
-	pExtend // Extend (GCB=Extend, absorbed by LB9)
-	pZWJ    // ZWJ (U+200D, absorbed by LB9)
-
-	lastBaseProperty = pZWJ
+	Extend // Extend (GCB=Extend, absorbed by LB9)
+	ZWJ    // ZWJ (U+200D, absorbed by LB9)
 )
 
-// LB9 absorption states: base property after absorbing Extend/ZWJ.
-// Indices ≤ lastCodepointProperty so the engine moves the marker.
-//
-// LB9 says: Do NOT apply to BK, CR, LF, NL, SP, ZW — those are excluded.
-// For all other bases, X (Extend|ZWJ)* → X_XX (absorb the combining marks).
-const (
-	pAL_XX uint8 = lastBaseProperty + 1 + iota
-	pHL_XX
-	pNU_XX
-	pID_XX
-	pEB_XX
-	pRI_XX
-	pOP_XX
-	pOP_EA_XX
-	pCP_XX
-	pCP_EA_XX
-	pCL_XX
-	pBA_XX
-	pHY_XX
-	pBB_XX
-	pB2_XX
-	pSY_XX
-	pIS_XX
-	pPR_XX
-	pPO_XX
-	pIN_XX
-	pGL_XX
-	pWJ_XX
-	pNS_XX
-	pEX_XX
-	pQU_XX
-	pQU_PI_XX
-	pQU_PF_XX
-	pCB_XX
-	pSA_XX
-	pCJ_XX
-	pAK_XX
-	pAP_XX
-	pAS_XX
-	pVF_XX
-	pVI_XX
-	pEM_XX
-	pJL_XX
-	pJV_XX
-	pJT_XX
-	pH2_XX
-	pH3_XX
-	pXX_XX
+// allBaseProperties is the OR of all base property bits.
+const allBaseProperties = BK | CR | LF | NL | SP | ZW | WJ | GL |
+	CL | EX | IS | SY | OP | QU | NS | HY | BA | BB | B2 | IN |
+	AL | NU | PR | PO | ID | EB | EM | CB | RI | SA | HL | CJ |
+	AK | AP | AS | VF | VI |
+	JL | JV | JT | H2 | H3 |
+	OP_EA | CP | CP_EA | QU_PI | QU_PF |
+	Extend | ZWJ
 
-	lastCodepointProperty = pXX_XX
-)
+// Composite group constants. These OR together related base properties
+// for use in break rules (via flat.Expand).
 
-// Chain/lookahead states and virtual properties.
-const (
-	pZW_SP uint8 = lastCodepointProperty + 1 + iota // LB8: ZW SP*
+// LB9Excluded lists properties that do NOT participate in LB9 absorption.
+// These are either mandatory-break/space/zero-width properties that are
+// never absorbers, or the transparent properties being absorbed.
+const LB9Excluded = BK | CR | LF | NL | SP | ZW | Extend | ZWJ
 
-	pOP_SP    // LB14: OP SP*
-	pOP_EA_SP // LB14: OP_EA SP*
+// MandatoryBreak groups all hard line break properties (LB4–LB6).
+const MandatoryBreak = BK | CR | LF | NL
 
-	pQU_PI_SP // LB15a: (primed) QU_PI SP*
+// AnyOP groups all Open Punctuation variants.
+const AnyOP = OP | OP_EA
 
-	pCL_SP    // LB16: CL/CP SP*
-	pCP_SP    // LB16: CP SP*
-	pCP_EA_SP // LB16: CP_EA SP*
+// AnyCP groups all Close Parenthesis variants.
+const AnyCP = CP | CP_EA
 
-	pB2_SP // LB17: B2 SP*
+// AnyClose groups all closing punctuation (CL + CP variants).
+const AnyClose = CL | CP | CP_EA
 
-	pHL_HY // LB21a: HL (HY|BA)
+// AnyQU groups all Quotation variants.
+const AnyQU = QU | QU_PI | QU_PF
 
-	pRI_RI // LB30a: RI × RI (paired)
+// Hangul groups all Korean syllable types (LB26/LB27).
+const Hangul = JL | JV | JT | H2 | H3
 
-	pNU_Num      // LB25: NU (NU|SY|IS)* numeric body
-	pNU_Close_CL // LB25: NU ... CL (close from CL)
-	pNU_Close_CP // LB25: NU ... CP (close from CP, has LB30 keeps)
-	pNU_PR       // LB25: NU ... (PO|PR) chain for (PO|PR) × OP/HY/NU
+// Aksara groups all aksara-related properties (LB28a).
+const Aksara = AK | AS | VF | VI
 
-	// Virtual properties.
-	pSOT      // start of text
-	pEOT      // end of text
-	propCount // total number of properties (= stride)
-)
+// AksaraFinal groups aksara properties that can appear on the right of LB28a.
+const AksaraFinal = AK | VF
+
+// Ideographic groups ID, Emoji Base, and Emoji Modifier (LB23a).
+const Ideographic = ID | EB | EM
+
+// ALLike groups all properties that behave as AL (LB10).
+// Unattached Extend/ZWJ (after BK/CR/LF/NL/SP/ZW) and SA resolve to AL.
+// XX (zero value) also resolves to AL but cannot be expressed as a bitflag;
+// it is added separately via expandAll(0) in gen.go.
+const ALLike = AL | SA | Extend | ZWJ
