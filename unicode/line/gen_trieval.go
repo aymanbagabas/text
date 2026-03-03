@@ -6,99 +6,152 @@
 
 package main
 
-// Class is a bitflag type for line break properties.
-// Each base property occupies one bit. The zero value represents XX (Unknown).
-type Class uint64
-
-// Base property bitflags for line break (UAX #14).
+// Line break property indices.
+// XX is the zero value: the trie returns 0 for codepoints with no entry,
+// which correctly maps to XX (resolved to AL by LB1).
 //
-// Each property occupies one bit in a Class value. The zero value
-// represents XX (LB=XX) — the default property for codepoints
-// with no specific class.
+// Base properties stored in the trie.
+// The order does NOT need to match any external file — it only matters that
+// these values are assigned consistently between gen.go (which writes the trie)
+// and trieval.go (which reads it at runtime).
 //
-// The order follows Table 1 of UAX #14 (Unicode Line Breaking Algorithm).
-// Properties resolved at parse time (CM→Extend, SG→XX, AI→AL, HH→HY) are
-// omitted — they are handled in lbMap. CJ is included because it needs a
-// distinct index for the CJ→NS resolution in Step 5.
-//
-// LB9 absorption states, chain states, and virtual properties are
-// NOT bitflags — they are uint8 indices assigned after flattening,
-// used by the state machine.
+// AI and CJ are NOT listed here: AI resolves to AL and CJ resolves to NS
+// at parse time (LB1). They never appear as property values in the trie or table.
 const (
-	XX Class = 0 // LB=XX (Unknown / default) — zero value, no bits set
+	XX = iota // LB=XX (Unknown / default, zero value)
+	AK        // LB=AK (Aksara)
+	AL        // LB=AL (Alphabetic)
+	AL_DC     // LB=AL with dotted circle (U+25CC)
+	AP        // LB=AP (Aksara Pre-base)
+	AS        // LB=AS (Aksara Start)
+	B2        // LB=B2 (Break Opportunity Before and After)
+	BA        // LB=BA (Break After)
+	BB        // LB=BB (Break Before)
+	BK        // LB=BK (Mandatory Break)
+	CB        // LB=CB (Contingent Break)
+	CL        // LB=CL (Close Punctuation)
+	CM        // LB=CM (Combining Mark)
+	CP        // LB=CP (Close Parenthesis)
+	CR        // LB=CR (Carriage Return)
+	EB        // LB=EB (Emoji Base)
+	EM        // LB=EM (Emoji Modifier)
+	EX        // LB=EX (Exclamation/Interrogation)
+	GL        // LB=GL (Non-breaking / Glue)
+	H2        // LB=H2 (Hangul LV Syllable)
+	H3        // LB=H3 (Hangul LVT Syllable)
+	HL        // LB=HL (Hebrew Letter)
+	HY        // LB=HY (Hyphen)
+	ID        // LB=ID (Ideographic)
+	ID_ExtPict // LB=ID with unassigned codepoints (GC=Cn + ExtPict)
+	IN        // LB=IN (Inseparable)
+	IS        // LB=IS (Infix Numeric Separator)
+	JL        // LB=JL (Hangul L Jamo)
+	JT        // LB=JT (Hangul T Jamo)
+	JV        // LB=JV (Hangul V Jamo)
+	LF        // LB=LF (Line Feed)
+	NL        // LB=NL (Next Line)
+	NS        // LB=NS (Nonstarter)
+	NU        // LB=NU (Numeric)
+	OP_EA     // LB=OP East Asian (Full/Half/Wide)
+	OP        // LB=OP non-East Asian
+	PO        // LB=PO (Postfix Numeric)
+	PO_EA     // LB=PO East Asian Width
+	PR        // LB=PR (Prefix Numeric)
+	PR_EA     // LB=PR East Asian Width
+	QU        // LB=QU (Quotation)
+	QU_PF     // LB=QU with GeneralCategory=Pf
+	QU_PI     // LB=QU with GeneralCategory=Pi
+	RI        // LB=RI (Regional Indicator)
+	SA        // LB=SA (Complex Context / South Asian)
+	SP        // LB=SP (Space)
+	SY        // LB=SY (Symbols Allowing Break After)
+	VF        // LB=VF (Virama Final)
+	VI        // LB=VI (Virama)
+	WJ        // LB=WJ (Word Joiner)
+	ZW        // LB=ZW (Zero Width Space)
+	ZWJ       // LB=ZWJ (U+200D)
 
-	// Non-tailorable line breaking classes.
-	BK Class = 1 << iota // LB=BK (Mandatory Break)
-	CR                   // LB=CR (Carriage Return)
-	LF                   // LB=LF (Line Feed)
-	NL                   // LB=NL (Next Line)
-	WJ                   // LB=WJ (Word Joiner)
-	ZW                   // LB=ZW (Zero Width Space)
-	GL                   // LB=GL (Non-breaking / Glue)
-	SP                   // LB=SP (Space)
-
-	// Break opportunities.
-	B2 // LB=B2 (Break Opportunity Before and After)
-	BA // LB=BA (Break After)
-	BB // LB=BB (Break Before)
-	HY // LB=HY (Hyphen)
-	CB // LB=CB (Contingent Break)
-
-	// Characters prohibiting certain breaks.
-	CL // LB=CL (Close Punctuation)
-	CP // LB=CP (Close Parenthesis)
-	EX // LB=EX (Exclamation/Interrogation)
-	IN // LB=IN (Inseparable)
-	NS // LB=NS (Nonstarter)
-	OP // LB=OP (Open Punctuation)
-	QU // LB=QU (Quotation)
-
-	// Numeric context.
-	IS // LB=IS (Infix Numeric Separator)
-	NU // LB=NU (Numeric)
-	PO // LB=PO (Postfix Numeric)
-	PR // LB=PR (Prefix Numeric)
-	SY // LB=SY (Symbols Allowing Break After)
-
-	// Other characters.
-	AK // LB=AK (Aksara)
-	AL // LB=AL (Alphabetic)
-	AP // LB=AP (Aksara Pre-base)
-	AS // LB=AS (Aksara Start)
-	CJ // LB=CJ (Conditional Japanese Starter, resolved to NS or ID)
-	EB // LB=EB (Emoji Base)
-	EM // LB=EM (Emoji Modifier)
-	H2 // LB=H2 (Hangul LV Syllable)
-	H3 // LB=H3 (Hangul LVT Syllable)
-	HL // LB=HL (Hebrew Letter)
-	ID // LB=ID (Ideographic)
-	JL // LB=JL (Hangul L Jamo)
-	JV // LB=JV (Hangul V Jamo)
-	JT // LB=JT (Hangul T Jamo)
-	RI // LB=RI (Regional Indicator)
-	SA // LB=SA (Complex Context / South Asian)
-	VF // LB=VF (Virama Final)
-	VI // LB=VI (Virama)
-
-	// Orthogonal trait flags. These are not UCD Line_Break values;
-	// they are combined with base properties at parse time.
-	EastAsian // EastAsianWidth ∈ {F, H, W}
-	Pi        // GeneralCategory = Pi (Initial Punctuation)
-	Pf        // GeneralCategory = Pf (Final Punctuation)
-	ExtPict   // Extended_Pictographic (emoji/emoji-data.txt)
-
-	// LB9/LB10 transparent properties.
-	Extend // Extend (GCB=Extend, absorbed by LB9)
-	ZWJ    // ZWJ (U+200D, absorbed by LB9)
+	lastBaseProperty = ZWJ
 )
 
-// allBaseProperties is the OR of all single-bit property flags that represent
-// standalone codepoint properties. Trait flags (EastAsian, Pi, Pf) are excluded
-// because they only appear combined with base properties (e.g. OP|EastAsian).
-const allBaseProperties = BK | CR | LF | NL | WJ | ZW | GL | SP |
-	B2 | BA | BB | HY | CB |
-	CL | CP | EX | IN | NS | OP | QU |
-	IS | NU | PO | PR | SY |
-	AK | AL | AP | AS | EB | EM | H2 | H3 | HL | ID |
-	JL | JV | JT | RI | SA | VF | VI | CJ |
-	Extend | ZWJ
+// LB9 absorption states. When base property B sees CM, it enters B_XX
+// (same rule row as B, but self-loops on CM). When B or B_XX sees ZWJ,
+// it enters ZWJ_absorb (LB8a: keep for everything).
+//
+// Only non-excluded base properties have absorption states.
+// Excluded (BK, CR, LF, NL, SP, ZW, CM, ZWJ) do not absorb per LB9.
+const (
+	AK_XX         = lastBaseProperty + 1 + iota
+	AL_XX
+	AL_DC_XX
+	AP_XX
+	AS_XX
+	B2_XX
+	BA_XX
+	BB_XX
+	CB_XX
+	CL_XX
+	CP_XX
+	EB_XX
+	EM_XX
+	EX_XX
+	GL_XX
+	H2_XX
+	H3_XX
+	HL_XX
+	HY_XX
+	ID_XX
+	ID_ExtPict_XX
+	IN_XX
+	IS_XX
+	JL_XX
+	JT_XX
+	JV_XX
+	NS_XX
+	NU_XX
+	OP_EA_XX
+	OP_XX
+	PO_XX
+	PO_EA_XX
+	PR_XX
+	PR_EA_XX
+	QU_XX
+	QU_PF_XX
+	QU_PI_XX
+	RI_XX
+	SA_XX
+	SY_XX
+	VF_XX
+	VI_XX
+	WJ_XX
+	XX_XX
+
+	ZWJ_absorb // universal LB8a state: keep for everything after ZWJ
+
+	lastCP = ZWJ_absorb
+)
+
+// Chain/combined states (not codepoint-advancing).
+const (
+	OP_SP = lastCP + 1 + iota // OP SP*
+	QU_SP                     // QU_PI SP* (× OP)
+	SP_QU                     // SP × QU_PF (keep)
+	CB_QU                     // CB × QU_PF (keep, LB20 exception)
+	CL_CP_SP                  // (CL|CP) SP*
+	B2_SP                     // B2 SP*
+	HL_HY                     // HL × (HY|BA)
+	AK_VI                     // (AK|AL_DC|AS) × VI
+	AK_AK                     // Aksara chain
+	AK_DC                     // aksara chain, last was [◌] (U+25CC)
+	RI_RI                     // RI × RI pair
+
+	NU_OP       // (PR|PO) × OP, awaiting NU
+	NU_Num      // numeric context (NU seen)
+	NU_Close_CL // NU (SY|IS|NU)* CL
+	NU_Close_CP // NU (SY|IS|NU)* CP
+	NU_Post     // NU ... (PR|PO) postfix
+
+	sot
+	eot
+	stride
+)

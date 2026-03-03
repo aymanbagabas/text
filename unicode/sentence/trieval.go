@@ -2,45 +2,49 @@
 
 package sentence
 
-// Class is a bitflag type for sentence break properties.
-// Each base property occupies one bit. The zero value represents Other.
-type Class uint16
+// Sentence break property indices.
+// The zero value is Other (the default for codepoints with no specific class).
+// These values are stored directly in the trie.
 
-// Base property bitflags for sentence break.
-//
-// Each property occupies one bit in a Class value. The zero value
-// represents Other (SB=Other) — the default property for codepoints
-// with no specific class.
-//
-// SB5 absorption states, chain states, and virtual properties are
-// NOT bitflags — they are uint8 indices assigned after flattening,
-// used by the state machine.
+// Base properties stored in the trie.
 const (
-	Other Class = 0 // SB=Other — zero value, no bits set
-
-	CR        Class = 1 << iota // SB=CR
-	LF                          // SB=LF
-	Extend                      // SB=Extend
-	Sep                         // SB=Sep
-	Format                      // SB=Format
-	Sp                          // SB=Sp
-	Lower                       // SB=Lower
-	Upper                       // SB=Upper
-	OLetter                     // SB=OLetter
-	Numeric                     // SB=Numeric
-	ATerm                       // SB=ATerm
-	SContinue                   // SB=SContinue
-	STerm                       // SB=STerm
-	Close                       // SB=Close
+	Other     = iota // SB=Other
+	CR               // SB=CR
+	LF               // SB=LF
+	Extend           // SB=Extend
+	Sep              // SB=Sep
+	Format           // SB=Format
+	Sp               // SB=Sp
+	Lower            // SB=Lower
+	Upper            // SB=Upper
+	OLetter          // SB=OLetter
+	Numeric          // SB=Numeric
+	ATerm            // SB=ATerm
+	SContinue        // SB=SContinue
+	STerm            // SB=STerm
+	Close            // SB=Close
 )
 
-// allBaseProperties is the OR of all base property bits.
-const allBaseProperties = CR | LF | Sep | Extend | Format | Sp |
-	Lower | Upper | OLetter | Numeric | ATerm | STerm | SContinue | Close
+// lastCP is the threshold for marker advancement in the segmenter engine.
+// Properties with index > lastCP are combined states that should not advance
+// the marker on Index state transitions.
+const lastCP = Close
 
-// ParaSep groups paragraph separator properties.
-const ParaSep = Sep | CR | LF
+// Combined states for sentence break chains and SB5 absorption.
+const (
+	UpperATerm       = lastCP + 1 + iota // Upper × ATerm (SB7)
+	LowerATerm                           // Lower × ATerm (SB8)
+	ATermClose                           // ATerm Close* (SB8/SB8a)
+	ATermCloseSp                         // ATerm Close* Sp* (SB9)
+	ATermCloseSpPSep                     // ATerm Close* Sp* (Sep|LF) — paragraph break
+	ATermCloseSpCR                       // ATerm Close* Sp* CR — awaits LF
+	ATermCloseSpSB8                      // SB8 scanning state
+	STermClose                           // STerm Close* (SB8a)
+	STermCloseSp                         // STerm Close* Sp* (SB9)
+	STermCloseSpPSep                     // STerm Close* Sp* (Sep|LF) — paragraph break
+	STermCloseSpCR                       // STerm Close* Sp* CR — awaits LF
 
-// SATerm groups sentence-terminator properties (base only).
-// For expanded SATerm including absorption states, see gen.go.
-const SATerm = ATerm | STerm
+	sot    // start of text
+	eot    // end of text
+	stride // total table dimension
+)

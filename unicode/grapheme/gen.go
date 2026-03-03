@@ -17,15 +17,14 @@ import (
 	"golang.org/x/text/internal/ucd"
 )
 
-// gcbMap maps Grapheme_Cluster_Break property value strings to Class bitflags.
-var gcbMap = map[string]Class{
+var gcbMap = map[string]uint8{
 	"Other":              Other,
 	"CR":                 CR,
 	"LF":                 LF,
 	"Control":            Control,
 	"Extend":             Extend,
 	"ZWJ":                ZWJ,
-	"Regional_Indicator": RI,
+	"Regional_Indicator": Regional_Indicator,
 	"Prepend":            Prepend,
 	"SpacingMark":        SpacingMark,
 	"L":                  L,
@@ -35,48 +34,20 @@ var gcbMap = map[string]Class{
 	"LVT":                LVT,
 }
 
+func p(v ...uint8) []uint8 {
+	return v
+}
+
 func main() {
 	gen.Init()
 	genTables()
 }
 
 func genTables() {
-	// --- Flattener setup ---
-	// Register all base properties. No modifiers for grapheme.
-	flat := segmenter.NewFlattener[Class]()
-	numBase := flat.AddAllBaseProperties(allBaseProperties) // 18 (Other + 17 base properties)
-
-	// Combined state indices (assigned above base properties).
-	pRI_RI := uint8(numBase)
-	pExtPict_Ext := uint8(numBase + 1)
-	pExtPict_ZWJ := uint8(numBase + 2)
-	pInCB_Linker := uint8(numBase + 3)
-
-	lastCodepointProperty := pInCB_Linker
-
-	// Virtual properties.
-	pSOT := uint8(numBase + 4)
-	pEOT := uint8(numBase + 5)
-	propCount := int(numBase + 6)
-
-	// --- Property lookup helper ---
-	idx := flat.Index
-
-	// --- Repackage gen_trieval.go → trieval.go ---
 	gen.Repackage("gen_trieval.go", "trieval.go", "grapheme")
-
-	// --- Generate props.go (runtime-used constants only) ---
-	writeProps(lastCodepointProperty, pSOT, pEOT, uint8(propCount))
-
-	// --- Build trie ---
-	w := gen.NewCodeWriter()
-	defer w.WriteVersionedGoFile("tables.go", "grapheme")
-
-	gen.WriteUnicodeVersion(w)
 
 	props := make([]uint8, unicode.MaxRune+1)
 
-	// Step 1: Parse Grapheme_Cluster_Break values.
 	ucd.Parse(gen.OpenUCDFile("auxiliary/GraphemeBreakProperty.txt"), func(p *ucd.Parser) {
 		r := p.Rune(0)
 		val := p.String(1)
@@ -84,17 +55,15 @@ func genTables() {
 		if !ok {
 			log.Fatalf("U+%04X: unknown Grapheme_Cluster_Break value %q", r, val)
 		}
-		props[r] = idx(cls)
+		props[r] = uint8(cls)
 	})
 
-	// Step 2: Parse Extended_Pictographic from emoji data.
 	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(p *ucd.Parser) {
 		if p.String(1) == "Extended_Pictographic" {
-			props[p.Rune(0)] = idx(ExtPict)
+			props[p.Rune(0)] = uint8(Extended_Pictographic)
 		}
 	})
 
-	// Step 3: Parse InCB (Indic_Conjunct_Break) from DerivedCoreProperties.
 	ucd.Parse(gen.OpenUCDFile("DerivedCoreProperties.txt"), func(p *ucd.Parser) {
 		if p.String(1) != "InCB" {
 			return
@@ -102,126 +71,115 @@ func genTables() {
 		r := p.Rune(0)
 		switch p.String(2) {
 		case "Linker":
-			props[r] = idx(InCBLinker)
+			props[r] = uint8(InCBLinker)
 		case "Consonant":
-			props[r] = idx(InCBConsonant)
+			props[r] = uint8(InCBConsonant)
 		case "Extend":
-			props[r] = idx(InCBExtend)
+			if r != 0x200D {
+				props[r] = uint8(InCBExtend)
+			}
 		}
 	})
 
-	// Step 4: Build the property trie.
+	w := gen.NewCodeWriter()
+	defer w.WriteVersionedGoFile("tables.go", "grapheme")
+
+	fmt.Fprintf(w, "import %q\n\n", "golang.org/x/text/internal/segmenter")
+	gen.WriteUnicodeVersion(w)
+
 	t := triegen.NewTrie("grapheme")
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		if props[r] != 0 {
 			t.Insert(r, uint64(props[r]))
 		}
 	}
-
 	sz, err := t.Gen(w)
 	if err != nil {
 		log.Fatal(err)
 	}
 	w.Size += sz
 
-	// Step 5: Build and write the break state table.
-
-	// Flatten ClassRules to uint8-based Rules.
-	flatRules := flat.FlattenRules(classRules)
-
-	// Build the full rule list with virtual and combined-state rules.
-	rules := []segmenter.Rule{
-		{Left: []uint8{pSOT}, Right: nil, Break: false}, // GB1
-		{Left: nil, Right: []uint8{pEOT}, Break: true},  // GB2
-	}
-	rules = append(rules, flatRules...) // GB3–GB9b, GB999
-
-	// Insert combined-state rules before GB999 (last entry).
-	gb999 := rules[len(rules)-1]
-	rules = rules[:len(rules)-1]
-	rules = append(rules,
-		segmenter.Rule{Left: []uint8{pInCB_Linker}, Right: []uint8{idx(InCBConsonant)}, Break: false}, // GB9c
-		segmenter.Rule{Left: []uint8{pExtPict_ZWJ}, Right: []uint8{idx(ExtPict)}, Break: false},       // GB11
-		segmenter.Rule{Left: []uint8{idx(RI)}, Right: []uint8{idx(RI)}, Break: false},                 // GB12/13
-		segmenter.Rule{Left: []uint8{pRI_RI}, Right: []uint8{idx(RI)}, Break: true},                   // GB12/13
-		gb999, // GB999
-	)
-
-	combinedStates := []segmenter.CombinedState{
-		// GB12/13: RI × RI → enter pRI_RI (pair consumed; next RI will break).
-		{Left: idx(RI), Right: idx(RI), State: pRI_RI},
-
-		// GB11: ExtPict × Extend → enter pExtPict_Ext (accumulating extends).
-		{Left: idx(ExtPict), Right: idx(Extend), State: pExtPict_Ext},
-		{Left: idx(ExtPict), Right: idx(InCBExtend), State: pExtPict_Ext},
-		// GB11: ExtPict_Ext × Extend → stay in pExtPict_Ext.
-		{Left: pExtPict_Ext, Right: idx(Extend), State: pExtPict_Ext},
-		{Left: pExtPict_Ext, Right: idx(InCBExtend), State: pExtPict_Ext},
-		// GB11: ExtPict_Ext × ZWJ → enter pExtPict_ZWJ (ready for next ExtPict).
-		{Left: pExtPict_Ext, Right: idx(ZWJ), State: pExtPict_ZWJ},
-		// GB11: ExtPict × ZWJ → enter pExtPict_ZWJ (no intervening Extend).
-		{Left: idx(ExtPict), Right: idx(ZWJ), State: pExtPict_ZWJ},
-
-		// GB9c: Consonant × Linker → enter pInCB_Linker.
-		{Left: idx(InCBConsonant), Right: idx(InCBLinker), State: pInCB_Linker},
-		// GB9c: InCB_Linker × Extend → stay (absorb extends within the cluster).
-		{Left: pInCB_Linker, Right: idx(InCBExtend), State: pInCB_Linker},
-		// GB9c: InCB_Linker × Linker → stay (multiple linkers allowed).
-		{Left: pInCB_Linker, Right: idx(InCBLinker), State: pInCB_Linker},
-	}
-
-	table := segmenter.BuildStateTable(rules, combinedStates, int(propCount))
-
-	w.WriteComment(
-		`breakTable is the grapheme cluster break state table.
-	breakTable[left*stride + right] encodes the action for (left, right).
-	See segmenter.BreakState for the action encoding.`)
-	fmt.Fprintf(w, "var breakTable = [...]uint8{")
-	for i, v := range table {
-		if i%int(propCount) == 0 {
-			fmt.Fprintf(w, "\n\t")
-		}
-		fmt.Fprintf(w, "%d, ", v)
-	}
-	fmt.Fprintf(w, "\n}\n\n")
-
-	w.WriteComment("stride is the number of columns in breakTable.")
-	fmt.Fprintf(w, "const stride = %d\n", int(propCount))
+	rules := buildRules()
+	bt := segmenter.Build(rules, uint8(stride), uint8(sot), uint8(eot), uint8(lastCP))
+	segmenter.WriteBreakTable(w, "ruleData", bt, "graphemeTrie", 0)
 }
 
-// ---------------------------------------------------------------------------
-// Grapheme cluster boundary rules (UAX #29) — using Class bitflags
-// ---------------------------------------------------------------------------
+func buildRules() []segmenter.Rule {
+	var rules []segmenter.Rule
 
-// classRules encodes the UAX #29 grapheme cluster boundary rules (GB3–GB999)
-// using Class bitflags. GB1 (SOT), GB2 (EOT), and combined-state rules
-// (GB9c, GB11, GB12/13) are added separately since they reference uint8
-// state indices.
-//
-// References: https://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundary_Rules
-// writeProps generates props.go with the runtime-used property constants.
-func writeProps(lastCodepointProperty, pSOT, pEOT, propCount uint8) {
-	w := gen.NewCodeWriter()
-	defer w.WriteGoFile("prop.go", "grapheme")
+	// Rules are listed in spec order (GB1–GB999). The table builder uses
+	// first-write-wins, so higher-priority rules (lower numbers) that
+	// appear earlier take precedence over lower-priority ones.
 
-	fmt.Fprintf(w, "const (\n")
-	fmt.Fprintf(w, "\tpropCount             uint8 = %d\n", propCount)
-	fmt.Fprintf(w, "\tlastCodepointProperty uint8 = %d\n", lastCodepointProperty)
-	fmt.Fprintf(w, "\tpSOT                  uint8 = %d\n", pSOT)
-	fmt.Fprintf(w, "\tpEOT                  uint8 = %d\n", pEOT)
-	fmt.Fprintf(w, ")\n")
+	// GB1: sot ÷ (implicit — segmenter starts at position 0)
+	// SOT consumes the first character; keep transitions so the first
+	// segment isn't artificially split.
+	rules = append(rules, segmenter.SimpleRule{Left: p(sot), Right: nil, Break: false})
+	// GB2: ÷ eot
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(eot), Break: true})
+
+	// GB3: CR × LF
+	rules = append(rules, segmenter.SimpleRule{Left: p(CR), Right: p(LF), Break: false})
+
+	// GB4: (Control|CR|LF) ÷
+	rules = append(rules, segmenter.SimpleRule{Left: p(Control, CR, LF), Right: nil, Break: true})
+	// GB5: ÷ (Control|CR|LF)
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(Control, CR, LF), Break: true})
+
+	// GB6: L × (L|V|LV|LVT)
+	rules = append(rules, segmenter.SimpleRule{Left: p(L), Right: p(L, V, LV, LVT), Break: false})
+	// GB7: (LV|V) × (V|T)
+	rules = append(rules, segmenter.SimpleRule{Left: p(LV, V), Right: p(V, T), Break: false})
+	// GB8: (LVT|T) × T
+	rules = append(rules, segmenter.SimpleRule{Left: p(LVT, T), Right: p(T), Break: false})
+
+	// GB9: × (Extend|ZWJ|InCBExtend|InCBLinker)
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(Extend, ZWJ, InCBExtend, InCBLinker), Break: false})
+	// GB9a: × SpacingMark
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(SpacingMark), Break: false})
+	// GB9b: Prepend ×
+	rules = append(rules, segmenter.SimpleRule{Left: p(Prepend), Right: nil, Break: false})
+
+	// GB9c: Consonant [{Extend|InCBExtend} {Linker} {Extend|InCBExtend}]+ Consonant
+	rules = append(rules, segmenter.SimpleRule{Left: p(InCB_Linker), Right: p(InCBConsonant), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(InCBConsonant),
+		Steps: []segmenter.ChainStep{
+			{Props: p(InCBLinker), State: uint8(InCB_Linker)},
+		},
+		SelfLoop: p(InCBExtend, InCBLinker),
+		Interm:   false,
+	})
+
+	// GB11: ExtPict Extend* ZWJ × ExtPict
+	rules = append(rules, segmenter.SimpleRule{Left: p(ExtPict_ZWJ), Right: p(Extended_Pictographic), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(Extended_Pictographic),
+		Steps: []segmenter.ChainStep{
+			{Props: p(Extend, InCBExtend), State: uint8(ExtPict_Ext)},
+			{Props: p(ZWJ), State: uint8(ExtPict_ZWJ)},
+		},
+		SelfLoop: p(Extend, InCBExtend),
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(Extended_Pictographic),
+		Steps: []segmenter.ChainStep{
+			{Props: p(ZWJ), State: uint8(ExtPict_ZWJ)},
+		},
+	})
+
+	// GB12/13: RI × RI (pair, then break on next RI)
+	rules = append(rules, segmenter.SimpleRule{Left: p(Regional_Indicator), Right: p(Regional_Indicator), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: p(Regional_Indicator), Break: true})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(Regional_Indicator),
+		Steps: []segmenter.ChainStep{
+			{Props: p(Regional_Indicator), State: uint8(RI_RI)},
+		},
+	})
+
+	// GB999: Any ÷ Any (default break — lowest priority, last)
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: nil, Break: true})
+
+	return rules
 }
-
-var classRules = []segmenter.ClassRule[Class]{
-	{Left: CR, Right: LF, Break: false},                           // GB3
-	{Left: Control | CR | LF, Break: true},                        // GB4
-	{Right: Control | CR | LF, Break: true},                       // GB5
-	{Left: L, Right: L | V | LV | LVT, Break: false},              // GB6
-	{Left: LV | V, Right: V | T, Break: false},                    // GB7
-	{Left: LVT | T, Right: T, Break: false},                       // GB8
-	{Right: Extend | ZWJ | InCBExtend | InCBLinker, Break: false}, // GB9
-	{Right: SpacingMark, Break: false},                            // GB9a
-	{Left: Prepend, Break: false},                                 // GB9b
-	{Break: true},                                                 // GB999
-}
-

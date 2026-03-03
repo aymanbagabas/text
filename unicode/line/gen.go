@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 	"unicode"
 
 	"golang.org/x/text/internal/gen"
@@ -17,10 +18,9 @@ import (
 	"golang.org/x/text/internal/ucd"
 )
 
-// lbMap maps Line_Break property value strings to Class bitflags.
-// Entries that need synthetic splitting (OP, CP, QU) get their base flag;
-// gen.go post-processes them using EastAsianWidth and GeneralCategory.
-var lbMap = map[string]Class{
+// lbMap maps Line_Break UCD property value strings to property indices.
+// AI resolves to AL and CJ resolves to NS at parse time (LB1).
+var lbMap = map[string]uint8{
 	"XX":  XX,
 	"BK":  BK,
 	"CR":  CR,
@@ -53,23 +53,72 @@ var lbMap = map[string]Class{
 	"RI":  RI,
 	"SA":  SA,
 	"HL":  HL,
-	"CJ":  CJ,
+	"CJ":  NS, // LB1: CJ → NS
 	"AK":  AK,
 	"AP":  AP,
 	"AS":  AS,
 	"VF":  VF,
 	"VI":  VI,
 	"CP":  CP,
-	"AI":  AL,     // LB1: AI → AL
-	"SG":  XX,     // LB1: SG → XX
-	"CM":  Extend, // LB9: CM treated as Extend; LB10: remaining CM → AL
-	"ZWJ": ZWJ,    // LB9: ZWJ
-	"H2":  H2,     // LB26/27: Hangul LV syllable
-	"H3":  H3,     // LB26/27: Hangul LVT syllable
-	"JL":  JL,     // LB26/27: Hangul L Jamo
-	"JV":  JV,     // LB26/27: Hangul V Jamo
-	"JT":  JT,     // LB26/27: Hangul T Jamo
-	"HH":  HY,     // Unambiguous Hyphen → HY
+	"AI":  AL, // LB1: AI → AL
+	"SG":  XX,
+	"CM":  CM,
+	"ZWJ": ZWJ,
+	"H2":  H2,
+	"H3":  H3,
+	"JL":  JL,
+	"JV":  JV,
+	"JT":  JT,
+	"HH":  HY,
+}
+
+// lb9XX maps each non-excluded base property to its _XX absorption state.
+// Used only during generation by expandAll() and the LB9 absorption loop.
+var lb9XX = map[uint8]uint8{
+	XX:               XX_XX,
+	AK:               AK_XX,
+	AL:               AL_XX,
+	AL_DC: AL_DC_XX,
+	AP:               AP_XX,
+	AS:               AS_XX,
+	B2:               B2_XX,
+	BA:               BA_XX,
+	BB:               BB_XX,
+	CB:               CB_XX,
+	CL:               CL_XX,
+	CP:               CP_XX,
+	EB:               EB_XX,
+	EM:               EM_XX,
+	EX:               EX_XX,
+	GL:               GL_XX,
+	H2:               H2_XX,
+	H3:               H3_XX,
+	HL:               HL_XX,
+	HY:               HY_XX,
+	ID:               ID_XX,
+	ID_ExtPict:            ID_ExtPict_XX,
+	IN:               IN_XX,
+	IS:               IS_XX,
+	JL:               JL_XX,
+	JT:               JT_XX,
+	JV:               JV_XX,
+	NS:               NS_XX,
+	NU:               NU_XX,
+	OP_EA:            OP_EA_XX,
+	OP:          OP_XX,
+	PO:               PO_XX,
+	PO_EA:           PO_EA_XX,
+	PR:               PR_XX,
+	PR_EA:           PR_EA_XX,
+	QU:               QU_XX,
+	QU_PF:            QU_PF_XX,
+	QU_PI:            QU_PI_XX,
+	RI:               RI_XX,
+	SA:               SA_XX,
+	SY:               SY_XX,
+	VF:               VF_XX,
+	VI:               VI_XX,
+	WJ:               WJ_XX,
 }
 
 func main() {
@@ -77,744 +126,652 @@ func main() {
 	genTables()
 }
 
+// versionAtLeast reports whether the Unicode version string v is >= the given
+// major.minor version. Versions are compared as "major.minor" (patch ignored).
+func versionAtLeast(v string, major, minor int) bool {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	var maj, min int
+	fmt.Sscanf(parts[0], "%d", &maj)
+	fmt.Sscanf(parts[1], "%d", &min)
+	return maj > major || (maj == major && min >= minor)
+}
+
 func genTables() {
-	// --- Flattener setup ---
-	flat := segmenter.NewFlattener[Class]()
-	flat.AddAllBaseProperties(allBaseProperties)
-
-	// Register multi-bit combinations (base property + orthogonal trait).
-	flat.Add(OP | EastAsian) // East Asian open punctuation
-	flat.Add(CP | EastAsian) // East Asian close parenthesis
-	flat.Add(QU | Pi)        // Quotation with gc=Pi
-	flat.Add(QU | Pf)        // Quotation with gc=Pf
-	flat.Add(ID | ExtPict)   // Ideographic + Extended_Pictographic
-	flat.Add(AL | ExtPict)   // Alphabetic + Extended_Pictographic
-	flat.Add(NS | ExtPict)   // Nonstarter + Extended_Pictographic
-	flat.Add(EX | ExtPict)   // Exclamation + Extended_Pictographic
-
-	idx := flat.Index
-
-	// --- LB9 absorption states ---
-	// Every registered key that participates in LB9 gets an _XX state
-	// (Extend absorbed). Only ExtPict-capable properties additionally
-	// get a _ZWJ state (ZWJ absorbed), used by the emoji ZWJ rule.
-	// This keeps total states under the 120 Index-state limit.
-	//
-	// Excluded from LB9: BK, CR, LF, NL, SP, ZW, Extend, ZWJ.
-	const lb9Excluded = BK | CR | LF | NL | SP | ZW | Extend | ZWJ
-	xxOfMap := make(map[Class]uint8)  // registered key → _XX state index
-	zwjOfMap := make(map[Class]uint8) // registered key → _ZWJ state index
-	nextIdx := uint8(flat.Len())      // starts after all registered keys
-
-	// Properties that can be the base before ZWJ in emoji ZWJ sequences.
-	// Only these get dedicated _ZWJ states; others route ZWJ → _XX.
-	zwjEligible := map[Class]bool{
-		EB:          true,
-		ID | ExtPict: true,
-		AL | ExtPict: true,
-		NS | ExtPict: true,
-		EX | ExtPict: true,
-	}
-
-	for _, cls := range flat.Keys() {
-		if cls == 0 { // XX handled separately below
-			continue
-		}
-		if cls&lb9Excluded != 0 {
-			continue
-		}
-		xxOfMap[cls] = nextIdx
-		nextIdx++
-		if zwjEligible[cls] {
-			zwjOfMap[cls] = nextIdx
-			nextIdx++
-		}
-	}
-	// XX also absorbs (LB10: unattached Extend/ZWJ → AL behavior).
-	xxOfMap[XX] = nextIdx
-	nextIdx++
-	zwjOfMap[XX] = nextIdx
-	nextIdx++
-
-	lastCodepointProperty := nextIdx - 1
-
-	// allZWJStates collects all _ZWJ absorption state indices.
-	var allZWJStates []uint8
-	for _, cls := range flat.Keys() {
-		if zwj, ok := zwjOfMap[cls]; ok {
-			allZWJStates = append(allZWJStates, zwj)
-		}
-	}
-	if zwj, ok := zwjOfMap[XX]; ok {
-		allZWJStates = append(allZWJStates, zwj)
-	}
-
-	// expandAll returns the uint8 indices of all registered keys
-	// matching mask, plus their LB9 absorption states (if any).
-	// mask == 0 is a special case: it matches only the XX (zero) key.
-	expandAll := func(mask Class) []uint8 {
-		var r []uint8
-		for _, cls := range flat.Keys() {
-			if cls == 0 {
-				if mask&XX == 0 && mask != 0 {
-					continue
-				}
-			} else if cls&mask == 0 {
-				continue
-			}
-			r = append(r, idx(cls))
-			if xx, ok := xxOfMap[cls]; ok {
-				r = append(r, xx)
-			}
-			if zwj, ok := zwjOfMap[cls]; ok {
-				r = append(r, zwj)
-			}
-		}
-		return r
-	}
-
-	// --- Chain/lookahead states ---
-	pZW_SP := nextIdx
-	nextIdx++
-	pOP_SP := nextIdx
-	nextIdx++
-	pOP_EA_SP := nextIdx
-	nextIdx++
-	pQU_SP := nextIdx
-	nextIdx++
-	pCL_SP := nextIdx
-	nextIdx++
-	pCP_SP := nextIdx
-	nextIdx++
-	pCP_EA_SP := nextIdx
-	nextIdx++
-	pB2_SP := nextIdx
-	nextIdx++
-	pHL_HY := nextIdx
-	nextIdx++
-	pRI_RI := nextIdx
-	nextIdx++
-	pNU_Num := nextIdx
-	nextIdx++
-	pNU_Close_CL := nextIdx
-	nextIdx++
-	pNU_Close_CP := nextIdx
-	nextIdx++
-	pNU_PR := nextIdx
-	nextIdx++
-
-	// Virtual properties.
-	pSOT := nextIdx
-	nextIdx++
-	pEOT := nextIdx
-	nextIdx++
-	propCount := nextIdx
-
-	// --- Repackage gen_trieval.go → trieval.go ---
 	gen.Repackage("gen_trieval.go", "trieval.go", "line")
 
-	// --- Generate prop.go (runtime-used constants only) ---
-	writeProps(idx, lastCodepointProperty, pSOT, pEOT, propCount)
+	if stride > 120 {
+		log.Fatalf("stride %d exceeds intermediateOffset 120", stride)
+	}
 
-	// --- Build trie ---
-	w := gen.NewCodeWriter()
-	defer w.WriteVersionedGoFile("tables.go", "line")
-
-	gen.WriteUnicodeVersion(w)
+	// =====================================================================
+	// Parse UCD files and build the property trie.
+	// =====================================================================
 
 	props := make([]uint8, unicode.MaxRune+1)
 
-	// Step 1: Parse Line_Break property values.
-	ucd.Parse(gen.OpenUCDFile("LineBreak.txt"), func(p *ucd.Parser) {
-		r := p.Rune(0)
-		val := p.String(1)
+	ucd.Parse(gen.OpenUCDFile("LineBreak.txt"), func(parser *ucd.Parser) {
+		r := parser.Rune(0)
+		val := parser.String(1)
 		cls, ok := lbMap[val]
 		if !ok {
 			log.Fatalf("U+%04X: unknown Line_Break value %q", r, val)
 		}
-		props[r] = idx(cls)
+		props[r] = cls
 	})
 
-	// Step 2: Parse East_Asian_Width.
 	eaw := make([]byte, unicode.MaxRune+1)
-	ucd.Parse(gen.OpenUCDFile("EastAsianWidth.txt"), func(p *ucd.Parser) {
-		r := p.Rune(0)
-		val := p.String(1)
+	ucd.Parse(gen.OpenUCDFile("EastAsianWidth.txt"), func(parser *ucd.Parser) {
+		r := parser.Rune(0)
+		val := parser.String(1)
 		if len(val) > 0 {
 			eaw[r] = val[0]
 		}
 	})
 
-	// Step 3: Parse General_Category.
 	gc := make([]string, unicode.MaxRune+1)
-	ucd.Parse(gen.OpenUCDFile("UnicodeData.txt"), func(p *ucd.Parser) {
-		r := p.Rune(0)
-		gc[r] = p.String(ucd.GeneralCategory)
+	ucd.Parse(gen.OpenUCDFile("UnicodeData.txt"), func(parser *ucd.Parser) {
+		r := parser.Rune(0)
+		gc[r] = parser.String(ucd.GeneralCategory)
 	})
 
-	// Step 4: Parse Extended_Pictographic from emoji-data.txt.
 	extPictSet := make(map[rune]bool)
-	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(p *ucd.Parser) {
-		if p.String(1) == "Extended_Pictographic" {
-			r := p.Rune(0)
-			extPictSet[r] = true
-			if gc[r] == "" {
-				props[r] = idx(EB)
-			}
+	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(parser *ucd.Parser) {
+		if parser.String(1) == "Extended_Pictographic" {
+			extPictSet[parser.Rune(0)] = true
 		}
 	})
 
-	// Step 5: Create synthetic properties by combining base + trait flags.
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		isEA := eaw[r] == 'F' || eaw[r] == 'H' || eaw[r] == 'W'
 		switch props[r] {
-		case idx(OP):
+		case OP:
 			if isEA {
-				props[r] = idx(OP | EastAsian)
+				props[r] = OP_EA
 			}
-		case idx(CP):
-			if isEA {
-				props[r] = idx(CP | EastAsian)
-			}
-		case idx(QU):
+		case QU:
 			switch gc[r] {
 			case "Pi":
-				props[r] = idx(QU | Pi)
+				props[r] = QU_PI
 			case "Pf":
-				props[r] = idx(QU | Pf)
+				props[r] = QU_PF
 			}
-		case idx(SA):
-			// LB1: SA with gc in {Mn, Mc} → CM behavior (resolve as AL per LB10).
+		case SA:
 			if gc[r] == "Mn" || gc[r] == "Mc" {
-				props[r] = idx(Extend)
+				props[r] = CM
 			}
-		case idx(CJ):
-			// In normal (default) strictness, CJ resolves to NS.
-			props[r] = idx(NS)
-		}
-		// Apply ExtPict trait to codepoints that are Extended_Pictographic.
-		if extPictSet[r] {
-			switch props[r] {
-			case idx(ID):
-				props[r] = idx(ID | ExtPict)
-			case idx(AL):
-				props[r] = idx(AL | ExtPict)
-			case idx(NS):
-				props[r] = idx(NS | ExtPict)
-			case idx(EX):
-				props[r] = idx(EX | ExtPict)
+		case PR:
+			if isEA {
+				props[r] = PR_EA
+			}
+		case PO:
+			if isEA {
+				props[r] = PO_EA
+			}
+		case AL:
+			if r == 0x25CC {
+				props[r] = AL_DC
+			}
+		case ID:
+			if (gc[r] == "Cn" || gc[r] == "") && extPictSet[r] {
+				props[r] = ID_ExtPict
 			}
 		}
 	}
 
-	// LB9/LB10: Map Extend (GCB=Extend) and ZWJ to their property indices.
-	ucd.Parse(gen.OpenUCDFile("auxiliary/GraphemeBreakProperty.txt"), func(p *ucd.Parser) {
-		r := p.Rune(0)
-		val := p.String(1)
+	ucd.Parse(gen.OpenUCDFile("auxiliary/GraphemeBreakProperty.txt"), func(parser *ucd.Parser) {
+		r := parser.Rune(0)
+		val := parser.String(1)
 		switch val {
 		case "Extend":
-			if props[r] == idx(XX) {
-				props[r] = idx(Extend)
+			if props[r] == XX {
+				props[r] = CM
 			}
 		case "ZWJ":
-			props[r] = idx(ZWJ)
+			props[r] = ZWJ
 		}
 	})
 
-	// Step 6: Build the property trie.
+	// =====================================================================
+	// Write output files.
+	// =====================================================================
+
+	w := gen.NewCodeWriter()
+	defer w.WriteVersionedGoFile("tables.go", "line")
+
+	fmt.Fprintf(w, "import %q\n\n", "golang.org/x/text/internal/segmenter")
+	gen.WriteUnicodeVersion(w)
+
 	t := triegen.NewTrie("line")
 	for r := rune(0); r <= unicode.MaxRune; r++ {
-		if props[r] != idx(XX) {
+		if props[r] != 0 {
 			t.Insert(r, uint64(props[r]))
 		}
 	}
-
 	sz, err := t.Gen(w)
 	if err != nil {
 		log.Fatal(err)
 	}
 	w.Size += sz
 
-	// --- Helper functions ---
-	p := func(ps ...uint8) []uint8 { return ps }
-	e := expandAll
-	allXX := e(0) // XX + pXX_XX (zero value can't be expressed in bitflag masks)
+	rules := buildRules(gen.UnicodeVersion())
+	bt := segmenter.Build(rules, stride, sot, eot, lastCP)
+	segmenter.WriteBreakTable(w, "ruleData", bt, "lineTrie", SA)
+}
 
-	// x returns the exact index + absorption states for a single registered key.
-	x := func(cls Class) []uint8 {
-		r := []uint8{idx(cls)}
-		if xx, ok := xxOfMap[cls]; ok {
+func p(v ...uint8) []uint8 { return v }
+
+// expand returns the given base properties plus their LB9 _XX absorption
+// states. This is the line-break equivalent of word's "ahletterPlusZWJ" groups.
+func expand(props ...uint8) []uint8 {
+	var r []uint8
+	for _, base := range props {
+		r = append(r, base)
+		if xx, ok := lb9XX[base]; ok {
 			r = append(r, xx)
 		}
-		if zwj, ok := zwjOfMap[cls]; ok {
-			r = append(r, zwj)
-		}
-		return r
 	}
+	return r
+}
 
-	// Property groups via expandAll.
-	// e(OP) returns both OP and OP|EastAsian (plus their absorption states).
-	// e(CP) returns both CP and CP|EastAsian.
-	// e(QU) returns QU, QU|Pi, and QU|Pf.
-	allOP := e(OP)
-	allCP := e(CP)
-	allCL := e(CL)
-	allClose := e(CL | CP) // CL, CP, CP|EastAsian
-	allQU := e(QU)
+func buildRules(unicodeVersion string) []segmenter.Rule {
+	hasLB15b := versionAtLeast(unicodeVersion, 15, 1)
 
-	allHL := e(HL)
-	allALLike := append(e(AL|SA|Extend|ZWJ|HL), allXX...) // ALLike + HL + XX
+	idx := segmenter.IndexState
+	interm := segmenter.IntermediateState
 
-	allNU := e(NU)
-	allPR := e(PR)
-	allPO := e(PO)
-	allEB := e(EB)
-	allEM := e(EM)
-	allExtPict := append(e(ExtPict), allEB...) // ID|ExtPict, AL|ExtPict, NS|ExtPict, EX|ExtPict + EB
-	allIS := e(IS)
-	allSY := e(SY)
-	allBB := e(BB)
-	allIN := e(IN)
-	allNS := e(NS)
-	allRI := e(RI)
-	allCB := e(CB)
-	allGL := e(GL)
-	allWJ := e(WJ)
-	allB2 := e(B2)
-	allEX := e(EX)
+	allAlpha := expand(AL, HL, XX, SA, CM, ZWJ)
+	allAlphaTarget := expand(AL, AL_DC, HL, XX, SA, CM, ZWJ)
+	prAll := expand(PR, PR_EA)
+	poAll := expand(PO, PO_EA)
+	opAll := expand(OP, OP_EA)
 
-	allAP := e(AP)
-	allAksara := e(AK | AS | VF | VI)
-	allAksaraFinal := e(AK | VF)
+	prpo := append(prAll, poAll...)
+	mandatory := p(BK, CR, LF, NL)
+	clcpexissy := expand(CL, CP, EX, IS, SY)
+	quAll := expand(QU, QU_PF, QU_PI)
+	bahyns := expand(BA, HY, NS)
+	hangul := expand(JL, JV, JT, H2, H3)
 
-	allJL := e(JL)
-	allJT := e(JT)
-	allHangul := e(JL | JV | JT | H2 | H3)
+	var rules []segmenter.Rule
 
-	allIdeographic := e(ID | EB | EM)
+	// =========================================================================
+	// Rules in spec order (LB1–LB31). First-write-wins: earlier rules
+	// (higher priority) take precedence.
+	// =========================================================================
 
-	// --- LB9 absorption ---
-	// Extend absorption → _XX state; ZWJ absorption → _ZWJ state (if available)
-	// or _XX state (for properties without a dedicated _ZWJ state).
-	lb9Ignored := p(idx(Extend), idx(ZWJ))
-	idxZWJ := idx(ZWJ)
+	// LB1: Assign a line breaking class to each code point of the input.
+	// (Resolved at parse time: AI→AL, CJ→NS, SA+Mn/Mc→CM.)
 
-	var combinedStates []segmenter.CombinedState
+	// LB2: sot ×
+	rules = append(rules, segmenter.SimpleRule{Left: p(sot), Break: false})
 
-	for cls, xx := range xxOfMap {
-		xx := xx // capture for closure
-		zwjTarget := xx
-		if zwj, ok := zwjOfMap[cls]; ok {
-			zwjTarget = zwj
-		}
-		props := p(idx(cls), xx)
-		if zwj, ok := zwjOfMap[cls]; ok {
-			props = append(props, zwj)
-		}
-		combinedStates = append(combinedStates, segmenter.IgnoreRule{
-			Props:   props,
-			Ignored: lb9Ignored,
+	// LB3: ! eot
+	rules = append(rules, segmenter.SimpleRule{Right: p(eot), Break: true})
+
+	// LB4: BK !
+	rules = append(rules, segmenter.SimpleRule{Left: expand(BK), Break: true})
+
+	// LB5: CR × LF, CR !, LF !, NL !
+	rules = append(rules, segmenter.SimpleRule{Left: expand(CR), Right: p(LF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(CR, LF, NL), Break: true})
+
+	// LB6: × (BK | CR | LF | NL)
+	rules = append(rules, segmenter.SimpleRule{Right: mandatory, Break: false})
+	rules = append(rules, segmenter.SimpleRule{
+		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: mandatory, Break: false,
+	})
+
+	// LB7: × SP, × ZW
+	rules = append(rules, segmenter.SimpleRule{Right: p(SP, ZW), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, RI_RI, AK_VI), Right: p(SP), Break: false})
+	rules = append(rules, segmenter.SimpleRule{
+		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: p(ZW), Break: false,
+	})
+
+	// LB8: ZW SP* ÷
+	rules = append(rules, segmenter.SimpleRule{Left: expand(ZW), Break: true})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(ZW),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: ZW}},
+	})
+
+	// LB8a: ZWJ ×
+	rules = append(rules, segmenter.SimpleRule{Left: expand(ZWJ), Break: false})
+
+	// LB9: X (CM | ZWJ)* → X
+	for base, xx := range lb9XX {
+		rules = append(rules, segmenter.IgnoreRule{
+			Props:   p(base, xx),
+			Ignored: p(CM, ZWJ),
 			Target: func(_, ign uint8) uint8 {
-				if ign == idxZWJ {
-					return zwjTarget
+				if ign == ZWJ {
+					return ZWJ_absorb
 				}
 				return xx
 			},
-		}.Expand()...)
+		})
 	}
-
-	// --- Chain rules ---
-
-	// LB8: ZW SP* ÷
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: p(idx(ZW)),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pZW_SP},
+	rules = append(rules, segmenter.OverrideRule{
+		States:    p(ZWJ_absorb),
+		WipeValue: segmenter.Keep,
+		Overrides: map[uint8]uint8{
+			eot: segmenter.Break,
+			CM:  idx(ZWJ_absorb),
+			ZWJ: idx(ZWJ_absorb),
 		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pZW_SP, Right: idx(SP), State: pZW_SP, Interm: true})
+	})
+
+	// LB10: Treat any remaining CM or ZWJ as AL.
+	// (Handled by including CM/ZWJ in allAlpha groups.)
+
+	// LB11: × WJ, WJ ×
+	rules = append(rules, segmenter.SimpleRule{Right: expand(WJ), Break: false})
+	rules = append(rules, segmenter.SimpleRule{
+		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: expand(WJ), Break: false,
+	})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(WJ), Break: false})
+
+	// LB12: GL ×
+	rules = append(rules, segmenter.SimpleRule{Left: expand(GL), Break: false})
+
+	// LB12a: [^SP BA HY] × GL
+	rules = append(rules, segmenter.SimpleRule{
+		Left: append(expand(SP, BA, HY), B2_SP, CL_CP_SP), Right: expand(GL), Break: true,
+	})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(GL), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, OP_SP, RI_RI, AK_VI), Right: expand(GL), Break: false})
+
+	// LB13: × CL, × CP, × EX, × IS, × SY
+	rules = append(rules, segmenter.SimpleRule{Right: clcpexissy, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(B2_SP, CL_CP_SP, QU_SP, AK_VI, RI_RI), Right: clcpexissy, Break: false})
 
 	// LB14: OP SP* ×
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: x(OP),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pOP_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pOP_SP, Right: idx(SP), State: pOP_SP, Interm: true})
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: x(OP | EastAsian),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pOP_EA_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pOP_EA_SP, Right: idx(SP), State: pOP_EA_SP, Interm: true})
+	rules = append(rules, segmenter.SimpleRule{Left: append(opAll, OP_SP), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: opAll,
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: OP_SP}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(OP_SP),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: OP_SP}},
+	})
 
-	// LB15: QU SP* × OP
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: allQU,
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pQU_SP},
-		},
+	// LB15a: (sot | BK | CR | LF | NL | OP | QU | GL | SP | ZW) QU_PI SP* ×
+	rules = append(rules, segmenter.ChainRule{
+		Entry:  expand(QU_PI),
+		Steps:  []segmenter.ChainStep{{Props: p(SP), State: QU_SP}},
 		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pQU_SP, Right: idx(SP), State: pQU_SP, Interm: true})
+	})
+	if !hasLB15b {
+		rules = append(rules, segmenter.ChainRule{
+			Entry:  expand(QU, QU_PF),
+			Steps:  []segmenter.ChainStep{{Props: p(SP), State: QU_SP}},
+			Interm: true,
+		})
+	}
+	var quPILeft []uint8
+	for bp := uint8(0); bp <= lastBaseProperty; bp++ {
+		if bp == BK || bp == CR || bp == LF || bp == NL || bp == SP || bp == ZW {
+			continue
+		}
+		if bp == QU || bp == QU_PI || bp == QU_PF {
+			continue
+		}
+		quPILeft = append(quPILeft, expand(bp)...)
+	}
+	quPILeft = append(quPILeft, HL_HY, AK_VI, AK_DC, RI_RI)
+	rules = append(rules, segmenter.ChainRule{
+		Entry: quPILeft,
+		Steps: []segmenter.ChainStep{{Props: p(QU_PI), State: QU}},
+	})
+	rules = append(rules, segmenter.OverrideRule{
+		States:    p(QU_SP),
+		WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := map[uint8]uint8{
+				eot: segmenter.Break,
+				SP:  interm(QU_SP),
+			}
+			for _, op := range opAll {
+				m[op] = segmenter.Keep
+			}
+			for _, mb := range mandatory {
+				m[mb] = segmenter.Keep
+			}
+			m[ZW] = segmenter.Keep
+			for _, c := range clcpexissy {
+				m[c] = segmenter.Keep
+			}
+			for _, w := range expand(WJ) {
+				m[w] = segmenter.Keep
+			}
+			return m
+		}(),
+	})
 
-	// LB16: (CL|CP) SP* × NS
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: allCL,
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pCL_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pCL_SP, Right: idx(SP), State: pCL_SP, Interm: true})
+	// LB15b: × QU_PF (SP | GL | WJ | CL | QU | CP | EX | IS | SY | BK | CR | LF | NL | ZW | eot)
+	rules = append(rules, segmenter.SimpleRule{
+		Left:  append(expand(QU_PF), SP_QU, CB_QU),
+		Right: append(p(SP, GL, WJ, CL, CP, EX, IS, SY, BK, CR, LF, NL, ZW), expand(QU, QU_PI, QU_PF)...),
+		Break: false,
+	})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(QU_PF), SP_QU, CB_QU), Right: p(eot), Break: true})
+	if hasLB15b {
+		rules = append(rules, segmenter.ChainRule{
+			Entry: expand(SP),
+			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}},
+		})
+		rules = append(rules, segmenter.ChainRule{
+			Entry: p(B2_SP), Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}}, Interm: true,
+		})
+		rules = append(rules, segmenter.ChainRule{
+			Entry: p(CL_CP_SP), Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}}, Interm: true,
+		})
+		rules = append(rules, segmenter.ChainRule{
+			Entry: expand(CB),
+			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: CB_QU}},
+		})
+		rules = append(rules, segmenter.ChainRule{
+			Entry: p(OP_SP),
+			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: QU_PF}},
+		})
+	}
 
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: x(CP),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pCP_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pCP_SP, Right: idx(SP), State: pCP_SP, Interm: true})
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: x(CP | EastAsian),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pCP_EA_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pCP_EA_SP, Right: idx(SP), State: pCP_EA_SP, Interm: true})
+	// LB16: (CL | CP) SP* × NS
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(CL, CP), CL_CP_SP), Right: expand(NS), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(CL, CP),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: CL_CP_SP}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(CL_CP_SP),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: CL_CP_SP}},
+	})
 
 	// LB17: B2 SP* × B2
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: allB2,
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(SP)), State: pB2_SP},
-		},
-		Interm: true,
-	}.Expand()...)
-	combinedStates = append(combinedStates, segmenter.CombinedState{Left: pB2_SP, Right: idx(SP), State: pB2_SP, Interm: true})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(B2), B2_SP), Right: expand(B2), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(B2),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: B2_SP}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: p(B2_SP),
+		Steps: []segmenter.ChainStep{{Props: p(SP), State: B2_SP}},
+	})
 
-	// LB21a: HL (HY|BA) ×
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: allHL,
-		Steps: []segmenter.ChainStep{
-			{Props: e(HY | BA), State: pHL_HY},
-		},
-		Interm: true,
-	}.Expand()...)
+	// LB18: SP ÷
+	rules = append(rules, segmenter.SimpleRule{Left: expand(SP), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(B2_SP, CL_CP_SP), Break: true})
 
-	// LB30a: RI × RI (paired)
-	combinedStates = append(combinedStates, segmenter.ChainRule{
-		Entry: allRI,
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(RI)), State: pRI_RI},
-		},
-		Interm: true,
-	}.Expand()...)
+	// LB19: × QU, QU ×
+	rules = append(rules, segmenter.SimpleRule{Right: quAll, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: quAll, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: quAll, Break: false})
 
-	// LB25 (tailored): NU (NU|SY|IS)* × (NU|SY|IS|CL|CP)
-	nuBodyRight := e(NU | SY | IS)
-	nuCLRight := allCL
-	nuCPRight := allCP
-	for _, l := range allNU {
-		for _, r := range nuBodyRight {
-			combinedStates = append(combinedStates, segmenter.CombinedState{Left: l, Right: r, State: pNU_Num, Interm: true})
+	// LB20: ÷ CB, CB ÷
+	rules = append(rules, segmenter.SimpleRule{Left: expand(CB), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(CB), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY), Right: expand(CB), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(CB_QU), Break: false})
+
+	// LB21: × BA, × HY, × NS, BB ×
+	rules = append(rules, segmenter.SimpleRule{Right: bahyns, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: bahyns, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(BB), Break: false})
+
+	// LB21a: HL (HY | BA) ×
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(HL),
+		Steps: []segmenter.ChainStep{{Props: expand(HY, BA), State: HL_HY}},
+	})
+
+	// LB21b: SY × HL
+	rules = append(rules, segmenter.SimpleRule{Left: expand(SY), Right: expand(HL), Break: false})
+
+	// LB22: × IN
+	rules = append(rules, segmenter.SimpleRule{Right: expand(IN), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: expand(IN), Break: false})
+
+	// LB23: (AL | HL) × NU, NU × (AL | HL)
+	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: expand(NU), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(NU), Right: allAlphaTarget, Break: false})
+
+	// LB23a: PR × (ID | EB | EM), (ID | EB | EM) × PO
+	rules = append(rules, segmenter.SimpleRule{Left: prAll, Right: expand(ID, ID_ExtPict, EB, EM), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(ID, ID_ExtPict, EB, EM), Right: poAll, Break: false})
+
+	// LB24: (PR | PO) × (AL | HL), (AL | HL) × (PR | PO)
+	rules = append(rules, segmenter.SimpleRule{Left: prpo, Right: allAlphaTarget, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: prpo, Break: false})
+
+	// LB25: Numeric context (NU (SY|IS)* (CL|CP)? (PR|PO)?, PR|PO × OP? NU, HY × NU)
+	rules = append(rules, segmenter.SimpleRule{Left: expand(HY), Right: expand(NU), Break: false})
+
+	lb25Entry := append(prAll, poAll...)
+
+	rules = append(rules, segmenter.ChainRule{
+		Entry: lb25Entry,
+		Steps: []segmenter.ChainStep{{Props: opAll, State: NU_OP}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: lb25Entry, Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: opAll, Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(HY), Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(NU, SY, IS), State: NU_Num}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(CL), State: NU_Close_CL}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(CP), State: NU_Close_CP}}, Interm: true,
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: lb25Entry, State: NU_Post}}, Interm: true,
+	})
+
+	nuCommonKeep := func(m map[uint8]uint8) {
+		for _, r := range mandatory {
+			m[r] = segmenter.Keep
 		}
-		for _, r := range nuCLRight {
-			combinedStates = append(combinedStates, segmenter.CombinedState{Left: l, Right: r, State: pNU_Close_CL, Interm: true})
+		for _, r := range p(SP, ZW) {
+			m[r] = segmenter.Keep
 		}
-		for _, r := range nuCPRight {
-			combinedStates = append(combinedStates, segmenter.CombinedState{Left: l, Right: r, State: pNU_Close_CP, Interm: true})
+		for _, r := range expand(WJ) {
+			m[r] = segmenter.Keep
 		}
-	}
-	for _, r := range nuBodyRight {
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Num, Right: r, State: pNU_Num, Interm: true})
-	}
-	for _, r := range nuCLRight {
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Num, Right: r, State: pNU_Close_CL, Interm: true})
-	}
-	for _, r := range nuCPRight {
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Num, Right: r, State: pNU_Close_CP, Interm: true})
-	}
-
-	nuPRRight := e(PO | PR)
-	for _, l := range allNU {
-		for _, r := range nuPRRight {
-			combinedStates = append(combinedStates, segmenter.CombinedState{Left: l, Right: r, State: pNU_PR, Interm: true})
+		for _, r := range clcpexissy {
+			m[r] = segmenter.Keep
+		}
+		for _, r := range quAll {
+			m[r] = segmenter.Keep
 		}
 	}
-	for _, r := range nuPRRight {
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Num, Right: r, State: pNU_PR, Interm: true})
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Close_CL, Right: r, State: pNU_PR, Interm: true})
-		combinedStates = append(combinedStates, segmenter.CombinedState{Left: pNU_Close_CP, Right: r, State: pNU_PR, Interm: true})
-	}
 
-	// --- Rules ---
-	rules := []segmenter.Rule{
-		// LB1: sot — don't break at start.
-		{Left: p(pSOT), Right: nil, Break: false},
-
-		// LB2: Any ÷ eot — break at end.
-		{Left: nil, Right: p(pEOT), Break: true},
-
-		// LB4: BK ÷
-		{Left: p(idx(BK)), Right: nil, Break: true},
-
-		// LB5: CR × LF
-		{Left: p(idx(CR)), Right: p(idx(LF)), Break: false},
-		// LB5: CR ÷, LF ÷, NL ÷
-		{Left: p(idx(CR), idx(LF), idx(NL)), Right: nil, Break: true},
-
-		// LB6: × (BK | CR | LF | NL)
-		{Left: nil, Right: p(idx(BK), idx(CR), idx(LF), idx(NL)), Break: false},
-
-		// LB7: × (SP | ZW)
-		{Left: nil, Right: p(idx(SP), idx(ZW)), Break: false},
-
-		// LB8: ZW SP* ÷ — chain rule handles the SP* case; base case ZW ÷ here.
-		{Left: p(idx(ZW)), Right: nil, Break: true},
-
-		// LB8a: ZWJ × — keep after ZWJ.
-		{Left: p(idx(ZWJ)), Right: nil, Break: false},
-
-		// Emoji ZWJ sequences: _ZWJ × ExtPict — don't break after
-		// absorbed ZWJ when followed by Extended_Pictographic.
-		// This mirrors WB3c/GB11 from other segmenters.
-		{Left: allZWJStates, Right: allExtPict, Break: false},
-
-		// LB11: × WJ, WJ ×
-		{Left: nil, Right: allWJ, Break: false},
-		{Left: allWJ, Right: nil, Break: false},
-
-		// LB12: GL ×
-		{Left: allGL, Right: nil, Break: false},
-
-		// LB12a: [^SP BA HY] × GL
-		{Left: e(SP | BA | HY), Right: allGL, Break: true},
-		{Left: nil, Right: allGL, Break: false},
-
-		// LB13 (tailored per Example 7): [^NU] × CL/CP/IS/SY, × EX.
-		{Left: nil, Right: allEX, Break: false},
-		{Left: allNU, Right: allClose, Break: true},
-		{Left: nil, Right: e(CL | CP | IS | SY), Break: false},
-
-		// LB14: OP SP* × — base rule for zero SPs.
-		{Left: allOP, Right: nil, Break: false},
-
-		// LB16: (CL|CP) SP* × NS — base rule for zero SPs.
-		{Left: allClose, Right: allNS, Break: false},
-
-		// LB17: B2 SP* × B2 — direct case B2 × B2.
-		{Left: allB2, Right: allB2, Break: false},
-
-		// LB18: SP ÷
-		{Left: p(idx(SP)), Right: nil, Break: true},
-
-		// LB19a: × QU ; QU ×
-		{Left: nil, Right: allQU, Break: false},
-		{Left: allQU, Right: nil, Break: false},
-
-		// LB20: ÷ CB, CB ÷
-		{Left: nil, Right: allCB, Break: true},
-		{Left: allCB, Right: nil, Break: true},
-
-		// LB21: × BA, × HY, × NS, BB ×
-		{Left: nil, Right: e(BA | HY | NS), Break: false},
-		{Left: allBB, Right: nil, Break: false},
-
-		// LB21b: SY × HL
-		{Left: allSY, Right: allHL, Break: false},
-
-		// LB22: × IN
-		{Left: nil, Right: allIN, Break: false},
-
-		// LB23: (AL|HL) × NU, NU × (AL|HL)
-		{Left: allALLike, Right: allNU, Break: false},
-		{Left: allNU, Right: allALLike, Break: false},
-
-		// LB23a: PR × (ID|EB|EM), (ID|EB|EM) × PO
-		{Left: allPR, Right: allIdeographic, Break: false},
-		{Left: allIdeographic, Right: allPO, Break: false},
-
-		// LB24: (PR|PO) × (AL|HL), (AL|HL) × (PR|PO)
-		{Left: e(PR | PO), Right: allALLike, Break: false},
-		{Left: allALLike, Right: e(PR | PO), Break: false},
-
-		// LB25 (tailored per Example 7):
-		{Left: e(PO | PR), Right: allNU, Break: false},
-		{Left: e(OP | HY), Right: allNU, Break: false},
-		{Left: allNU, Right: e(NU | SY | IS), Break: false},
-		{Left: allNU, Right: e(PO | PR), Break: false},
-
-		// LB26: Do not break a Korean syllable.
-		{Left: allJL, Right: e(JL | JV | H2 | H3), Break: false},
-		{Left: e(JV | H2), Right: e(JV | JT), Break: false},
-		{Left: e(JT | H3), Right: allJT, Break: false},
-
-		// LB27: Treat Korean Syllable Block the same as ID.
-		{Left: allHangul, Right: allPO, Break: false},
-		{Left: allPR, Right: allHangul, Break: false},
-
-		// LB28: (AL|HL) × (AL|HL)
-		{Left: allALLike, Right: allALLike, Break: false},
-
-		// LB28a: AP × (AK|AS|VF|VI), (AK|AS|VF|VI) × (AK|VF)
-		{Left: allAP, Right: allAksara, Break: false},
-		{Left: allAksara, Right: allAksaraFinal, Break: false},
-
-		// LB29: IS × (AL|HL)
-		{Left: allIS, Right: allALLike, Break: false},
-
-		// LB30: (AL|HL|NU) × OP (non-EA), CP (non-EA) × (AL|HL|NU)
-		{Left: append(allALLike, allNU...), Right: x(OP), Break: false},
-		{Left: x(CP), Right: append(allALLike, allNU...), Break: false},
-
-		// LB30b: EB × EM
-		{Left: allEB, Right: allEM, Break: false},
-
-		// LB31: ALL ÷ ALL (default break)
-		{Left: nil, Right: nil, Break: true},
-	}
-
-	// Step 7: Build and write the break state table.
-	table := segmenter.BuildStateTable(rules, combinedStates, int(propCount))
-
-	// Post-processing: chain state rows default to NoMatch (rewind).
-	chainStates := []uint8{
-		pZW_SP,
-		pOP_SP, pOP_EA_SP,
-		pQU_SP,
-		pCL_SP, pCP_SP, pCP_EA_SP,
-		pB2_SP,
-		pHL_HY,
-		pRI_RI,
-		pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR,
-	}
-
-	csSet := make(map[[2]int]bool)
-	for _, cs := range combinedStates {
-		csSet[[2]int{int(cs.Left), int(cs.Right)}] = true
-	}
-	for _, ls := range chainStates {
-		row := int(ls) * int(propCount)
-		for j := 0; j < int(propCount); j++ {
-			if csSet[[2]int{int(ls), j}] {
-				continue
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(NU_OP), WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := make(map[uint8]uint8)
+			for _, nu := range expand(NU) {
+				m[nu] = interm(NU_Num)
 			}
-			table[row+j] = segmenter.NoMatch
-		}
-	}
-
-	// Chain overrides: explicit transitions for chain state rows.
-	type chainOverride struct {
-		Lefts  []uint8
-		Rights []uint8
-		State  segmenter.BreakState
-	}
-
-	// Build "all non-SOT/EOT properties" for wildcard rights.
-	all := func() []uint8 {
-		var r []uint8
-		for i := uint8(0); i < propCount; i++ {
-			if i != pSOT && i != pEOT {
-				r = append(r, i)
+			return m
+		}(),
+	})
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(NU_Num), WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := map[uint8]uint8{eot: segmenter.Break}
+			nuCommonKeep(m)
+			for _, r := range expand(IN) {
+				m[r] = segmenter.Keep
 			}
-		}
-		return r
-	}()
-
-	lb6_7 := e(BK | CR | LF | NL | ZW | SP)
-
-	allChains := p(
-		pZW_SP,
-		pOP_SP, pOP_EA_SP,
-		pQU_SP,
-		pCL_SP, pCP_SP, pCP_EA_SP,
-		pB2_SP,
-		pHL_HY,
-		pRI_RI,
-		pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR,
-	)
-
-	loserChains := p(
-		pQU_SP,
-		pCL_SP, pCP_SP, pCP_EA_SP,
-		pB2_SP,
-		pRI_RI,
-		pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR,
-	)
-
-	lb13Right := e(CL | CP | EX | IS | SY)
-
-	chainOverrides := []chainOverride{
-		{Lefts: allChains, Rights: lb6_7, State: segmenter.Keep},
-		{Lefts: p(pRI_RI), Rights: p(pEOT), State: segmenter.Break},
-		{Lefts: loserChains, Rights: allWJ, State: segmenter.Keep},
-		{Lefts: loserChains, Rights: lb13Right, State: segmenter.Keep},
-		{Lefts: p(pOP_SP, pOP_EA_SP), Rights: all, State: segmenter.Keep},
-		{Lefts: p(pQU_SP), Rights: allOP, State: segmenter.Keep},
-		{Lefts: p(pCL_SP, pCP_SP, pCP_EA_SP), Rights: allNS, State: segmenter.Keep},
-		{Lefts: p(pB2_SP), Rights: allB2, State: segmenter.Keep},
-		{Lefts: p(pHL_HY), Rights: all, State: segmenter.Keep},
-		{Lefts: p(pRI_RI), Rights: allRI, State: segmenter.Break},
-		{Lefts: p(pNU_Num, pNU_Close_CL, pNU_Close_CP, pNU_PR), Rights: allQU, State: segmenter.Keep},
-		{Lefts: p(pNU_Num), Rights: append(e(IN|BA|HY|NS|AL|SA|Extend|ZWJ|HL|GL|OP), allXX...), State: segmenter.Keep},
-		{Lefts: p(pNU_Close_CP), Rights: append(e(AL|SA|Extend|ZWJ|HL|NU|IN|BA|HY|NS|GL|BB), allXX...), State: segmenter.Keep},
-		{Lefts: p(pNU_Close_CL), Rights: e(IN | BA | HY | NS | GL | BB), State: segmenter.Keep},
-		{Lefts: p(pNU_PR), Rights: e(OP | HY | NU), State: segmenter.Keep},
-	}
-
-	// Apply chain override transitions after the wipe.
-	for _, co := range chainOverrides {
-		for _, l := range co.Lefts {
-			for _, r := range co.Rights {
-				if csSet[[2]int{int(l), int(r)}] {
-					continue
-				}
-				table[int(l)*int(propCount)+int(r)] = co.State
+			for _, r := range bahyns {
+				m[r] = segmenter.Keep
 			}
-		}
-	}
+			for _, r := range allAlphaTarget {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(GL) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range opAll {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(EX) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(NU, SY, IS) {
+				m[r] = interm(NU_Num)
+			}
+			for _, r := range expand(CL) {
+				m[r] = interm(NU_Close_CL)
+			}
+			for _, r := range expand(CP) {
+				m[r] = interm(NU_Close_CP)
+			}
+			for _, r := range lb25Entry {
+				m[r] = interm(NU_Post)
+			}
+			return m
+		}(),
+	})
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(NU_Close_CL), WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := map[uint8]uint8{eot: segmenter.Break}
+			for _, r := range lb25Entry {
+				m[r] = interm(NU_Post)
+			}
+			nuCommonKeep(m)
+			for _, r := range expand(IN) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range bahyns {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(GL) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(BB) {
+				m[r] = segmenter.Keep
+			}
+			return m
+		}(),
+	})
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(NU_Close_CP), WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := map[uint8]uint8{eot: segmenter.Break}
+			for _, r := range lb25Entry {
+				m[r] = interm(NU_Post)
+			}
+			nuCommonKeep(m)
+			for _, r := range allAlphaTarget {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(NU) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(IN) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range bahyns {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(GL) {
+				m[r] = segmenter.Keep
+			}
+			for _, r := range expand(BB) {
+				m[r] = segmenter.Keep
+			}
+			return m
+		}(),
+	})
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(NU_Post), WipeValue: segmenter.NoMatch,
+		Overrides: func() map[uint8]uint8 {
+			m := map[uint8]uint8{eot: segmenter.Break}
+			for _, r := range opAll {
+				m[r] = idx(NU_OP)
+			}
+			for _, r := range expand(NU) {
+				m[r] = interm(NU_Num)
+			}
+			nuCommonKeep(m)
+			for _, r := range expand(HY) {
+				m[r] = segmenter.Keep
+			}
+			return m
+		}(),
+	})
 
-	w.WriteComment(
-		`breakTable is the line break state table.
-	breakTable[left*stride + right] encodes the action for (left, right).
-	See segmenter.BreakState for the action encoding.`)
-	fmt.Fprintf(w, "var breakTable = [...]uint8{")
-	for i, v := range table {
-		if i%int(propCount) == 0 {
-			fmt.Fprintf(w, "\n\t")
-		}
-		fmt.Fprintf(w, "%d, ", v)
-	}
-	fmt.Fprintf(w, "\n}\n\n")
+	// LB26: JL × (JL | JV | H2 | H3), (JV | H2) × (JV | JT), (JT | H3) × JT
+	rules = append(rules, segmenter.SimpleRule{Left: expand(JL), Right: expand(JL, JV, H2, H3), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(JV, H2), Right: expand(JV, JT), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(JT, H3), Right: expand(JT), Break: false})
 
-	w.WriteComment("stride is the number of columns in breakTable.")
-	fmt.Fprintf(w, "const stride = %d\n", propCount)
-}
+	// LB27: (JL | JV | JT | H2 | H3) × PO, PR × (JL | JV | JT | H2 | H3)
+	rules = append(rules, segmenter.SimpleRule{Left: hangul, Right: poAll, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: prAll, Right: hangul, Break: false})
 
-// writeProps generates prop.go with the runtime-used property constants.
-func writeProps(idx func(Class) uint8, lastCodepointProperty, pSOT, pEOT, propCount uint8) {
-	w := gen.NewCodeWriter()
-	defer w.WriteGoFile("prop.go", "line")
+	// LB28: (AL | HL) × (AL | HL)
+	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: allAlphaTarget, Break: false})
 
-	fmt.Fprintf(w, "const (\n")
-	fmt.Fprintf(w, "\tpropCount             uint8 = %d\n", propCount)
-	fmt.Fprintf(w, "\tlastCodepointProperty uint8 = %d\n", lastCodepointProperty)
-	fmt.Fprintf(w, "\tpSOT                  uint8 = %d\n", pSOT)
-	fmt.Fprintf(w, "\tpEOT                  uint8 = %d\n", pEOT)
-	fmt.Fprintf(w, "\tpSA                   uint8 = %d\n", idx(SA))
-	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "\tpBK uint8 = %d\n", idx(BK))
-	fmt.Fprintf(w, "\tpCR uint8 = %d\n", idx(CR))
-	fmt.Fprintf(w, "\tpLF uint8 = %d\n", idx(LF))
-	fmt.Fprintf(w, "\tpNL uint8 = %d\n", idx(NL))
-	fmt.Fprintf(w, ")\n")
+	// LB28a: AP × (AK | ◌ | AS), (AK | ◌ | AS) × (VF | VI), (AK | ◌ | AS) VI × (AK | ◌), (AK | ◌ | AS) × (AK | ◌ | AS) VF
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(AL_DC), AK_DC), Right: expand(AL, HL, XX, SA), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(AP), Right: expand(AK, AL_DC, AS), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(AK, AL_DC, AS), Right: expand(VF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Right: expand(AK, AL_DC), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_AK, AK_DC), Right: expand(VF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_DC), Break: true})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(AK, AL_DC, AS),
+		Steps: []segmenter.ChainStep{{Props: expand(VI), State: AK_VI}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(AK, AL_DC, AS),
+		Steps: []segmenter.ChainStep{{Props: expand(AK, AS), State: AK_AK}},
+	})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(AL_DC),
+		Steps: []segmenter.ChainStep{{Props: expand(AL_DC), State: AK_DC}},
+	})
+
+	// LB29: IS × (AL | HL)
+	rules = append(rules, segmenter.SimpleRule{Left: expand(IS), Right: expand(AL, HL, SA, XX, AL_DC), Break: false})
+
+	// LB30: (AL | HL | NU) × OP_nonEA, CP_nonEA × (AL | HL | NU)
+	rules = append(rules, segmenter.SimpleRule{
+		Left:  append(append(allAlpha, expand(NU, AL_DC)...), AK_DC),
+		Right: expand(OP),
+		Break: false,
+	})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(CP), Right: append(allAlphaTarget, expand(NU)...), Break: false})
+
+	// LB30a: sot (RI RI)* RI × RI, [^RI] (RI RI)* RI × RI
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: expand(RI), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Break: true})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: expand(RI),
+		Steps: []segmenter.ChainStep{{Props: expand(RI), State: RI_RI}},
+	})
+
+	// LB30b: EB × EM, [\p{Extended_Pictographic}&\p{Cn}] × EM
+	rules = append(rules, segmenter.SimpleRule{Left: expand(EB, ID_ExtPict), Right: expand(EM), Break: false})
+
+	// LB31: ALL ÷
+	rules = append(rules, segmenter.SimpleRule{Break: true})
+
+	return rules
 }

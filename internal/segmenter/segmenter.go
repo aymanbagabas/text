@@ -6,14 +6,14 @@
 // segmentation (UAX #29 and UAX #14). It is shared by the grapheme, word,
 // sentence, and line break packages.
 //
-// The engine is data-driven: each segmenter type supplies a [RuleData]
+// The engine is data-driven: each segmenter type supplies a [RuleBreakData]
 // containing property lookup tables and a pre-built break state table.
 // The table is an N×N matrix (left-property × right-property → action),
 // where actions are break, keep, no-match (rewind), or enter-combined-state.
 //
 // Combined states come in two flavours:
 //   - Index states (0–119) enter a combined state. Marker movement
-//     is controlled by [RuleData.LastCodepointProperty]: the marker only
+//     is controlled by [RuleBreakData.LastCodepointProperty]: the marker only
 //     advances when the previous state index ≤ LastCodepointProperty.
 //   - Intermediate states (120–252) always advance the rewind point,
 //     regardless of LastCodepointProperty. Encoded as property index + 120.
@@ -25,16 +25,9 @@ package segmenter
 type BreakState = uint8
 
 const (
-	// Break signals a definite break between left and right.
-	Break BreakState = 253
-	// NoMatch signals that a combined state did not match; break at the
-	// saved marker position (rewind).
+	Break   BreakState = 253
 	NoMatch BreakState = 254
-	// Keep signals no break; advance right and continue with right as the new left.
-	Keep BreakState = 255
-
-	// Values 0–119 are Index combined states.
-	// Values 120–252 are Intermediate combined states (property index + intermediateOffset).
+	Keep    BreakState = 255
 
 	intermediateOffset BreakState = 120
 )
@@ -58,86 +51,59 @@ func stateIndex(s uint8) uint8 {
 	return s
 }
 
-// IndexState returns the BreakState encoding for an Index combined
-// state with the given property index.
+// IndexState returns the BreakState encoding for an Index combined state.
 func IndexState(prop uint8) BreakState { return prop }
 
-// IntermediateState returns the BreakState encoding for an Intermediate
-// combined state with the given property index.
+// IntermediateState returns the BreakState encoding for an Intermediate combined state.
 func IntermediateState(prop uint8) BreakState { return prop + intermediateOffset }
 
-// PropertyTable abstracts the trie lookup for codepoint → property index.
-type PropertyTable interface {
-	Lookup(b []byte) (prop uint8, size int)
+// IsIndex reports whether state is an Index combined state (not Intermediate).
+func IsIndex(s uint8) bool {
+	return s < intermediateOffset
 }
 
-// RuleData holds the generated tables for one segmenter type.
-type RuleData struct {
-	// Properties is the base property trie.
-	Properties PropertyTable
+// IsIntermediate reports whether state is an Intermediate combined state.
+func IsIntermediate(s uint8) bool {
+	return isIntermediate(s)
+}
 
-	// Override is an optional locale/CSS override trie. When non-nil, it is
-	// checked first; a non-zero return value overrides the base property.
-	Override PropertyTable
+// IndexValue extracts the property index from a combined state.
+func IndexValue(s uint8) uint8 {
+	return stateIndex(s)
+}
 
-	// BreakTable is the N×N state table in row-major order.
-	// BreakTable[left*Stride + right] gives the action for (left, right).
-	BreakTable []BreakState
-	Stride     int // number of columns (= total property count)
-
-	PropCount uint8 // number of base properties (before combined states)
-
-	// LastCodepointProperty is the highest index that counts as a
-	// "codepoint property" for marker movement purposes. Indices
-	// 0..LastCodepointProperty are base properties + absorption combined
-	// states. Indices above are lookahead combined states.
-	//
-	// When entering a combined state via Index encoding, the walker
-	// moves the marker only if the PREVIOUS left property index was
-	// ≤ LastCodepointProperty. This means absorption states (which map
-	// back to base indices or _ZWJ indices, all ≤ LastCodepointProperty)
-	// advance the marker, while lookahead states (> LastCodepointProperty)
-	// do not.
+// RuleBreakData holds the generated tables for one segmenter type.
+// This is the runtime data structure populated by generated tables.go files.
+type RuleBreakData struct {
+	PropertyLookup        func([]byte) (uint8, int)
+	BreakStateTable       []uint8
+	PropertyCount         uint8
 	LastCodepointProperty uint8
-
-	SOT         uint8 // start-of-text property index
-	EOT         uint8 // end-of-text property index
-	ComplexProp uint8 // SA property index (for dictionary delegation), 0 if none
+	SOTProperty           uint8
+	EOTProperty           uint8
+	// ComplexProp is the SA (South-East Asian) property index, used to
+	// identify codepoints that require dictionary-based segmentation.
+	// Not yet consumed at runtime; reserved for future complex-script support.
+	ComplexProp uint8
 }
 
-// ComplexHandler segments runs of complex-script text (SA property).
-// This interface is defined here as a shared contract — the engine itself
-// does NOT use it. The per-package segmenters (word, line) that wrap the
-// engine are responsible for detecting SA runs and delegating to the
-// appropriate ComplexHandler.
-type ComplexHandler interface {
-	Segment(input []byte) []int
-}
-
-// Segmenter iterates over segments in text. The iteration pattern is:
-//
-//	seg := segmenter.New(data, input)
-//	for seg.Next() {
-//	    seg.Bytes()  // current segment
-//	}
+// Segmenter iterates over segments in text.
 type Segmenter struct {
-	data  *RuleData
+	data  *RuleBreakData
 	input []byte
-	start int // start of current segment
-	end   int // end of current segment (updated by Next)
+	start int
+	end   int
 
-	boundaryProp uint8 // property of the left side at the break point
+	boundaryProp uint8
 }
 
 // New returns a Segmenter that iterates over segments in input
 // according to data.
-func New(data *RuleData, input []byte) *Segmenter {
+func New(data *RuleBreakData, input []byte) *Segmenter {
 	return &Segmenter{data: data, input: input}
 }
 
-// Next advances to the next segment. It returns false when the end of
-// input has been reached. After Next returns true, [Bytes], [Text], and
-// [Position] describe the current segment.
+// Next advances to the next segment.
 func (s *Segmenter) Next() bool {
 	if s.end >= len(s.input) {
 		return false
@@ -147,9 +113,9 @@ func (s *Segmenter) Next() bool {
 
 	var leftProp uint8
 	if s.end == 0 {
-		leftProp = s.data.SOT
-		rightProp, size := s.lookup(s.input[s.end:])
-		state := s.data.BreakTable[int(leftProp)*s.data.Stride+int(rightProp)]
+		leftProp = s.data.SOTProperty
+		rightProp, size := s.data.PropertyLookup(s.input[s.end:])
+		state := s.data.BreakStateTable[int(leftProp)*int(s.data.PropertyCount)+int(rightProp)]
 		s.end += size
 		switch state {
 		case Break:
@@ -166,7 +132,7 @@ func (s *Segmenter) Next() bool {
 		}
 	} else {
 		var size int
-		leftProp, size = s.lookup(s.input[s.end:])
+		leftProp, size = s.data.PropertyLookup(s.input[s.end:])
 		s.end += size
 	}
 
@@ -174,8 +140,8 @@ func (s *Segmenter) Next() bool {
 	markerLeftProp := leftProp
 
 	for s.end < len(s.input) {
-		rightProp, size := s.lookup(s.input[s.end:])
-		state := s.data.BreakTable[int(leftProp)*s.data.Stride+int(rightProp)]
+		rightProp, size := s.data.PropertyLookup(s.input[s.end:])
+		state := s.data.BreakStateTable[int(leftProp)*int(s.data.PropertyCount)+int(rightProp)]
 
 		switch state {
 		case Break:
@@ -195,12 +161,12 @@ func (s *Segmenter) Next() bool {
 			s.end = marker
 			s.boundaryProp = markerLeftProp
 			if s.end == s.start {
-				_, sz := s.lookup(s.input[s.end:])
+				_, sz := s.data.PropertyLookup(s.input[s.end:])
 				s.end += sz
 			}
 			return true
 
-		default: // combined state (Index or Intermediate)
+		default:
 			idx := stateIndex(state)
 			if isIntermediate(state) {
 				marker = s.end + size
@@ -218,8 +184,7 @@ func (s *Segmenter) Next() bool {
 		}
 	}
 
-	// End of text — check EOT rule.
-	eotState := s.data.BreakTable[int(leftProp)*s.data.Stride+int(s.data.EOT)]
+	eotState := s.data.BreakStateTable[int(leftProp)*int(s.data.PropertyCount)+int(s.data.EOTProperty)]
 	if eotState == NoMatch {
 		s.boundaryProp = markerLeftProp
 		s.end = marker
@@ -233,63 +198,42 @@ func (s *Segmenter) Next() bool {
 }
 
 // Bytes returns the current segment as a byte slice.
-// It is only valid after [Next] returns true.
 func (s *Segmenter) Bytes() []byte {
 	return s.input[s.start:s.end]
 }
 
 // Text returns the current segment as a string.
-// It is only valid after [Next] returns true.
 func (s *Segmenter) Text() string {
 	return string(s.input[s.start:s.end])
 }
 
 // Position returns the byte offsets [start, end) of the current segment.
-// It is only valid after [Next] returns true.
 func (s *Segmenter) Position() (start, end int) {
 	return s.start, s.end
 }
 
-// BoundaryProperty returns the property index of the left side at the break
-// point, after [Next] returns true. This is used by the word segmenter to
-// derive WordType (letter, number, or none). The engine tracks this
-// generically; interpretation is up to the per-package segmenter.
+// BoundaryProperty returns the property index of the left side at the break point.
 func (s *Segmenter) BoundaryProperty() uint8 {
 	return s.boundaryProp
 }
 
-// End returns the end position of the last segment (= start of the next).
+// End returns the end position of the last segment.
 func (s *Segmenter) End() int { return s.end }
 
-// SetEnd sets the end position. Used by wrapper-level fast paths that
-// scan ahead through known-safe bytes before calling [Next].
+// SetEnd sets the end position.
 func (s *Segmenter) SetEnd(pos int) { s.end = pos }
 
-// SetStart sets the start position of the current segment. Used by
-// wrapper-level fast paths to fix up the segment start after [Next]
-// when bytes were skipped via [SetEnd] before the call.
+// SetStart sets the start position of the current segment.
 func (s *Segmenter) SetStart(pos int) { s.start = pos }
 
 // Input returns the input byte slice.
 func (s *Segmenter) Input() []byte { return s.input }
 
-// FastForward sets the current segment to [pos, end) with the given boundary
-// property, without running the state machine. Used by per-package fast paths
-// (e.g., word's ASCII fast path) that can determine the segment boundary
-// without Unicode property lookups.
+// FastForward sets the current segment without running the state machine.
 func (s *Segmenter) FastForward(end int, prop uint8) {
 	s.start = s.end
 	s.end = end
 	s.boundaryProp = prop
 }
 
-// lookup resolves a codepoint's property, checking the override trie first.
-func (s *Segmenter) lookup(b []byte) (prop uint8, size int) {
-	if s.data.Override != nil {
-		prop, size = s.data.Override.Lookup(b)
-		if prop != 0 {
-			return prop, size
-		}
-	}
-	return s.data.Properties.Lookup(b)
-}
+

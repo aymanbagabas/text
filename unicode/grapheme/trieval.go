@@ -2,43 +2,39 @@
 
 package grapheme
 
-// Class is a bitflag type for grapheme cluster break properties.
-// Each base property occupies one bit. The zero value represents Other.
-type Class uint32
-
-// Base property bitflags for grapheme cluster break.
-//
-// Each property occupies one bit in a Class value. The zero value
-// represents Other (GCB=Other, InCB=None) — the default property for
-// codepoints with no specific class.
-//
-// Combined states (pRI_RI, pExtPict_Ext, etc.) are NOT bitflags — they
-// are uint8 indices assigned after flattening, used by the state machine
-// for multi-character lookahead.
+// Grapheme cluster break property indices.
+// The zero value is Other (the default for codepoints with no specific class).
+// These values are stored directly in the trie.
 const (
-	Other Class = 0 // GCB=Other (and InCB=None) — zero value, no bits set
-
-	CR            Class = 1 << iota // GCB=CR
-	LF                              // GCB=LF
-	Control                         // GCB=Control
-	Extend                          // GCB=Extend (and InCB=None)
-	ZWJ                             // GCB=ZWJ (U+200D)
-	RI                              // GCB=Regional_Indicator
-	Prepend                         // GCB=Prepend
-	SpacingMark                     // GCB=SpacingMark
-	L                               // GCB=L (Hangul leading jamo)
-	V                               // GCB=V (Hangul vowel jamo)
-	T                               // GCB=T (Hangul trailing jamo)
-	LV                              // GCB=LV (Hangul LV syllable)
-	LVT                             // GCB=LVT (Hangul LVT syllable)
-	ExtPict                         // Extended_Pictographic=Yes
-	InCBLinker                      // InCB=Linker (subset of GCB=Extend; viramas)
-	InCBConsonant                   // InCB=Consonant (subset of GCB=Other; Indic consonants)
-	InCBExtend                      // InCB=Extend (subset of GCB=Extend; combining marks near Indic clusters)
+	Other                 = iota // GCB=Other (and InCB=None)
+	CR                           // GCB=CR
+	LF                           // GCB=LF
+	Control                      // GCB=Control
+	Extend                       // GCB=Extend (and InCB=None)
+	ZWJ                          // GCB=ZWJ (U+200D)
+	Regional_Indicator           // GCB=Regional_Indicator
+	Prepend                      // GCB=Prepend
+	SpacingMark                  // GCB=SpacingMark
+	L                            // GCB=L (Hangul leading jamo)
+	V                            // GCB=V (Hangul vowel jamo)
+	T                            // GCB=T (Hangul trailing jamo)
+	LV                           // GCB=LV (Hangul LV syllable)
+	LVT                          // GCB=LVT (Hangul LVT syllable)
+	Extended_Pictographic        // Extended_Pictographic=Yes
+	InCBLinker                   // InCB=Linker
+	InCBConsonant                // InCB=Consonant
+	InCBExtend                   // InCB=Extend
 )
 
-// allBaseProperties is the OR of all base property bits.
-// Used by the flattener to register all base properties.
-const allBaseProperties = CR | LF | Control | Extend | ZWJ | RI | Prepend |
-	SpacingMark | L | V | T | LV | LVT | ExtPict |
-	InCBLinker | InCBConsonant | InCBExtend
+const lastCP = InCBExtend
+
+const (
+	RI_RI       = lastCP + 1 + iota // RI pair consumed
+	ExtPict_Ext                     // ExtPict + Extend*
+	ExtPict_ZWJ                     // ExtPict + Extend* + ZWJ
+	InCB_Linker                     // Consonant + {Extend|Linker}*Linker
+
+	sot    // start of text
+	eot    // end of text
+	stride // total table dimension
+)

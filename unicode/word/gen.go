@@ -17,27 +17,30 @@ import (
 	"golang.org/x/text/internal/ucd"
 )
 
-// wbMap maps Word_Break property value strings to Class bitflags.
-var wbMap = map[string]Class{
+var wbMap = map[string]uint8{
 	"Other":              Other,
 	"CR":                 CR,
 	"LF":                 LF,
 	"Newline":            Newline,
 	"Extend":             Extend,
 	"ZWJ":                ZWJ,
+	"Regional_Indicator": Regional_Indicator,
 	"Format":             Format,
-	"Regional_Indicator": RI,
 	"Katakana":           Katakana,
-	"Hebrew_Letter":      HebrewLetter,
+	"Hebrew_Letter":      Hebrew_Letter,
 	"ALetter":            ALetter,
-	"Single_Quote":       SingleQuote,
-	"Double_Quote":       DoubleQuote,
+	"Single_Quote":       Single_Quote,
+	"Double_Quote":       Double_Quote,
+	"MidNumLet":          MidNumLet,
 	"MidLetter":          MidLetter,
 	"MidNum":             MidNum,
-	"MidNumLet":          MidNumLet,
 	"Numeric":            Numeric,
 	"ExtendNumLet":       ExtendNumLet,
 	"WSegSpace":          WSegSpace,
+}
+
+func p(v ...uint8) []uint8 {
+	return v
 }
 
 func main() {
@@ -46,341 +49,299 @@ func main() {
 }
 
 func genTables() {
-	// --- Flattener setup ---
-	flat := segmenter.NewFlattener[Class]()
-	numBase := flat.AddAllBaseProperties(allBaseProperties) // 20 (Other + 19 base properties)
-
-	idx := flat.Index
-
-	// WB4 absorption states (assigned above base properties).
-	pWSegSpace_XX := uint8(numBase)
-	pALetter_ZWJ := uint8(numBase + 1)
-	pHebrewLetter_ZWJ := uint8(numBase + 2)
-	pNumeric_ZWJ := uint8(numBase + 3)
-	pKatakana_ZWJ := uint8(numBase + 4)
-	pExtendNumLet_ZWJ := uint8(numBase + 5)
-	pRegionalIndicator_ZWJ := uint8(numBase + 6)
-	pExtPict_ZWJ := uint8(numBase + 7)
-	pWSegSpace_ZWJ := uint8(numBase + 8)
-	lastCodepointProperty := pWSegSpace_ZWJ
-
-	// Lookahead states.
-	pAHL_MidLetter := lastCodepointProperty + 1
-	pHL_MidLetter := lastCodepointProperty + 2
-	pNum_MidNum := lastCodepointProperty + 3
-	pHL_DQ := lastCodepointProperty + 4
-	pRI_RI := lastCodepointProperty + 5
-
-	// Virtual properties.
-	pSOT := lastCodepointProperty + 6
-	pEOT := lastCodepointProperty + 7
-	propCount := int(lastCodepointProperty + 8)
-
-	// --- Repackage gen_trieval.go → trieval.go ---
 	gen.Repackage("gen_trieval.go", "trieval.go", "word")
 
-	// --- Generate prop.go (runtime-used constants only) ---
-	writeProps(idx, lastCodepointProperty,
-		pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
-		pKatakana_ZWJ, pExtendNumLet_ZWJ,
-		pSOT, pEOT, uint8(propCount))
-
-	// --- Build trie ---
-	w := gen.NewCodeWriter()
-	defer w.WriteVersionedGoFile("tables.go", "word")
-
-	gen.WriteUnicodeVersion(w)
-
+	isALetter := make([]bool, unicode.MaxRune+1)
 	props := make([]uint8, unicode.MaxRune+1)
 
-	// Step 1: Parse Word_Break property values.
-	ucd.Parse(gen.OpenUCDFile("auxiliary/WordBreakProperty.txt"), func(p *ucd.Parser) {
-		r := p.Rune(0)
-		val := p.String(1)
+	ucd.Parse(gen.OpenUCDFile("auxiliary/WordBreakProperty.txt"), func(parser *ucd.Parser) {
+		r := parser.Rune(0)
+		val := parser.String(1)
 		cls, ok := wbMap[val]
 		if !ok {
 			log.Fatalf("U+%04X: unknown Word_Break value %q", r, val)
 		}
-		props[r] = idx(cls)
+		props[r] = uint8(cls)
+		if cls == ALetter {
+			isALetter[r] = true
+		}
 	})
 
-	// Step 2: Parse Extended_Pictographic from emoji data (needed for WB3c).
-	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(p *ucd.Parser) {
-		if p.String(1) == "Extended_Pictographic" {
-			r := p.Rune(0)
-			if props[r] == idx(Other) {
-				props[r] = idx(ExtPict)
+	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(parser *ucd.Parser) {
+		if parser.String(1) == "Extended_Pictographic" {
+			r := parser.Rune(0)
+			if isALetter[r] {
+				props[r] = uint8(ALetter_Extended_Pictographic)
+			} else if props[r] == uint8(Other) {
+				props[r] = uint8(Extended_Pictographic)
 			}
 		}
 	})
 
-	// Step 3: Build the property trie.
+	isNumeric := func(r rune) bool { return props[r] == uint8(Numeric) }
+	ucd.Parse(gen.OpenUCDFile("LineBreak.txt"), func(parser *ucd.Parser) {
+		if parser.String(1) == "SA" {
+			r := parser.Rune(0)
+			if r == 0x19DA || isNumeric(r) || props[r] == uint8(Extend) {
+				return
+			}
+			props[r] = uint8(SA)
+		}
+	})
+	ucd.Parse(gen.OpenUCDFile("Scripts.txt"), func(parser *ucd.Parser) {
+		sc := parser.String(1)
+		if sc == "Han" || sc == "Hiragana" {
+			r := parser.Rune(0)
+			if !isNumeric(r) {
+				props[r] = uint8(SA)
+			}
+		}
+	})
+
+	w := gen.NewCodeWriter()
+	defer w.WriteVersionedGoFile("tables.go", "word")
+
+	fmt.Fprintf(w, "import %q\n\n", "golang.org/x/text/internal/segmenter")
+	gen.WriteUnicodeVersion(w)
+
 	t := triegen.NewTrie("word")
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		if props[r] != 0 {
 			t.Insert(r, uint64(props[r]))
 		}
 	}
-
 	sz, err := t.Gen(w)
 	if err != nil {
 		log.Fatal(err)
 	}
 	w.Size += sz
 
-	// Step 4: Build and write the break state table.
+	rules := buildRules()
+	bt := segmenter.Build(rules, uint8(stride), uint8(sot), uint8(eot), uint8(lastCP))
+	segmenter.WriteBreakTable(w, "ruleData", bt, "wordTrie", 0)
+}
 
-	// WB4 absorption helpers.
-	p := func(ps ...uint8) []uint8 { return ps }
+func buildRules() []segmenter.Rule {
+	ahletter := p(ALetter, Hebrew_Letter, ALetter_Extended_Pictographic)
+	ahletterPlusZWJ := p(ALetter, Hebrew_Letter, ALetter_Extended_Pictographic,
+		ALetter_ZWJ, Hebrew_Letter_ZWJ, ALetterEP_ZWJ)
+	hebrewPlusZWJ := p(Hebrew_Letter, Hebrew_Letter_ZWJ)
+	numericPlusZWJ := p(Numeric, Numeric_ZWJ)
+	katakanaPlusZWJ := p(Katakana, Katakana_ZWJ)
+	extNumLetPlusZWJ := p(ExtendNumLet, ExtendNumLet_ZWJ)
+	riPlusZWJ := p(Regional_Indicator, RI_ZWJ)
+	allZWJ := p(ZWJ, ALetter_ZWJ, Hebrew_Letter_ZWJ, Numeric_ZWJ,
+		Katakana_ZWJ, ExtendNumLet_ZWJ, RI_ZWJ, ExtPict_ZWJ,
+		WSegSpace_ZWJ, ALetterEP_ZWJ)
+	midLetterQ := p(MidLetter, MidNumLet, Single_Quote)
+	midNumQ := p(MidNum, MidNumLet, Single_Quote)
 
-	wb4Absorb := []struct {
-		base   uint8
-		zwj    uint8
-		extFmt uint8
+	wb4Ignored := p(Extend, Format, ZWJ)
+	wb13aLeft := make([]uint8, 0, len(ahletterPlusZWJ)+len(numericPlusZWJ)+len(katakanaPlusZWJ)+len(extNumLetPlusZWJ))
+	wb13aLeft = append(wb13aLeft, ahletterPlusZWJ...)
+	wb13aLeft = append(wb13aLeft, numericPlusZWJ...)
+	wb13aLeft = append(wb13aLeft, katakanaPlusZWJ...)
+	wb13aLeft = append(wb13aLeft, extNumLetPlusZWJ...)
+
+	idx := segmenter.IndexState
+
+	// WB4 absorption base definitions.
+	wb4Bases := []struct {
+		base uint8
+		zwj  uint8
+		ext  uint8
 	}{
-		{idx(ALetter), pALetter_ZWJ, idx(ALetter)},
-		{idx(HebrewLetter), pHebrewLetter_ZWJ, idx(HebrewLetter)},
-		{idx(Numeric), pNumeric_ZWJ, idx(Numeric)},
-		{idx(Katakana), pKatakana_ZWJ, idx(Katakana)},
-		{idx(ExtendNumLet), pExtendNumLet_ZWJ, idx(ExtendNumLet)},
-		{idx(RI), pRegionalIndicator_ZWJ, idx(RI)},
-		{idx(ExtPict), pExtPict_ZWJ, idx(ExtPict)},
-		{idx(WSegSpace), pWSegSpace_ZWJ, pWSegSpace_XX},
-		{pWSegSpace_XX, pWSegSpace_ZWJ, pWSegSpace_XX},
+		{uint8(ALetter), uint8(ALetter_ZWJ), uint8(ALetter)},
+		{uint8(Hebrew_Letter), uint8(Hebrew_Letter_ZWJ), uint8(Hebrew_Letter)},
+		{uint8(Numeric), uint8(Numeric_ZWJ), uint8(Numeric)},
+		{uint8(Katakana), uint8(Katakana_ZWJ), uint8(Katakana)},
+		{uint8(ExtendNumLet), uint8(ExtendNumLet_ZWJ), uint8(ExtendNumLet)},
+		{uint8(Regional_Indicator), uint8(RI_ZWJ), uint8(Regional_Indicator)},
+		{uint8(Extended_Pictographic), uint8(ExtPict_ZWJ), uint8(Extended_Pictographic)},
+		{uint8(WSegSpace), uint8(WSegSpace_ZWJ), uint8(WSegSpace_XX)},
+		{uint8(WSegSpace_XX), uint8(WSegSpace_ZWJ), uint8(WSegSpace_XX)},
+		{uint8(ALetter_Extended_Pictographic), uint8(ALetterEP_ZWJ), uint8(ALetter_Extended_Pictographic)},
 	}
 
-	wb4Ignored := p(idx(Extend), idx(Format), idx(ZWJ))
-
-	var wb4Combined []segmenter.CombinedState
-	for _, a := range wb4Absorb {
-		zwj, extFmt := a.zwj, a.extFmt
-		wb4Combined = append(wb4Combined, segmenter.IgnoreRule{
-			Props:   []uint8{a.base, a.zwj},
-			Ignored: wb4Ignored,
-			Target: func(_, ign uint8) uint8 {
-				if ign == idx(ZWJ) {
-					return zwj
-				}
-				return extFmt
-			},
-		}.Expand()...)
-	}
-
-	wb4SelfLoop := p(idx(Extend), idx(Format), idx(ZWJ))
-
-	allZWJ := p(idx(ZWJ),
-		pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
-		pKatakana_ZWJ, pExtendNumLet_ZWJ, pRegionalIndicator_ZWJ,
-		pExtPict_ZWJ, pWSegSpace_ZWJ,
-	)
-
-	flatAHLetter := p(idx(ALetter), idx(HebrewLetter), pALetter_ZWJ, pHebrewLetter_ZWJ)
-
-	// Flatten ClassRules.
-	flatRules := flat.FlattenRules(classRules)
-
-	// Build the full rule list with virtual, combined-state, and absorption rules.
 	var rules []segmenter.Rule
-	rules = append(rules, segmenter.Rule{Left: p(pSOT), Right: nil, Break: false})              // WB1
-	rules = append(rules, segmenter.Rule{Left: nil, Right: p(pEOT), Break: true})                // WB2
 
-	// WB3: CR × LF (from classRules[0])
-	rules = append(rules, flatRules[0])
-	// WB3a: (Newline | CR | LF) ÷ (from classRules[1])
-	rules = append(rules, flatRules[1])
-	// WB3b: ÷ (Newline | CR | LF) (from classRules[2])
-	rules = append(rules, flatRules[2])
+	// =========================================================================
+	// Rules in spec order (WB1–WB999). First-write-wins: earlier rules
+	// (higher priority) take precedence.
+	// =========================================================================
 
-	// WB3c: ZWJ × ExtPict — use allZWJ (includes _ZWJ absorption states)
-	rules = append(rules, segmenter.Rule{Left: allZWJ, Right: p(idx(ExtPict)), Break: false})
+	// WB1: sot ÷ Any
+	rules = append(rules, segmenter.SimpleRule{Left: p(sot), Right: nil, Break: false})
+
+	// WB2: Any ÷ eot
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(eot), Break: true})
+
+	// WB3: CR × LF
+	rules = append(rules, segmenter.SimpleRule{Left: p(CR), Right: p(LF), Break: false})
+
+	// WB3a: (Newline | CR | LF) ÷
+	rules = append(rules, segmenter.SimpleRule{Left: p(Newline, CR, LF), Break: true})
+
+	// WB3b: ÷ (Newline | CR | LF)
+	rules = append(rules, segmenter.SimpleRule{Right: p(Newline, CR, LF), Break: true})
+
+	// WB3c: ZWJ × \p{Extended_Pictographic}
+	rules = append(rules, segmenter.SimpleRule{
+		Left: allZWJ, Right: p(Extended_Pictographic, ALetter_Extended_Pictographic), Break: false,
+	})
 
 	// WB3d: WSegSpace × WSegSpace
-	rules = append(rules, segmenter.Rule{Left: p(idx(WSegSpace)), Right: p(idx(WSegSpace)), Break: false})
-
-	// WB4: × (Extend | Format | ZWJ)
-	rules = append(rules, segmenter.Rule{Left: nil, Right: p(idx(Extend), idx(Format), idx(ZWJ)), Break: false})
-
-	// WB5: AHLetter × AHLetter (from classRules[3])
-	rules = append(rules, segmenter.Rule{Left: flatAHLetter, Right: p(idx(ALetter), idx(HebrewLetter)), Break: false})
-
-	// WB7: AHL_MidLetter/HL_MidLetter × AHLetter
-	rules = append(rules, segmenter.Rule{
-		Left: p(pAHL_MidLetter, pHL_MidLetter), Right: p(idx(ALetter), idx(HebrewLetter)), Break: false,
+	rules = append(rules, segmenter.SimpleRule{
+		Left: p(WSegSpace), Right: p(WSegSpace), Break: false,
 	})
 
-	// WB7a: HebrewLetter × SingleQuote
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(HebrewLetter), pHebrewLetter_ZWJ), Right: p(idx(SingleQuote)), Break: false,
+	// WB4: X (Extend | Format | ZWJ)* → X
+	rules = append(rules, segmenter.SimpleRule{Right: wb4Ignored, Break: false})
+	for _, b := range wb4Bases {
+		rules = append(rules, segmenter.IgnoreRule{
+			Props:   []uint8{b.base, b.zwj},
+			Ignored: wb4Ignored,
+			Target: func(_, ign uint8) uint8 {
+				if ign == uint8(ZWJ) {
+					return b.zwj
+				}
+				return b.ext
+			},
+		})
+	}
+
+	// WB5: AHLetter × AHLetter
+	rules = append(rules, segmenter.SimpleRule{Left: ahletterPlusZWJ, Right: ahletter, Break: false})
+
+	// WB6: AHLetter × (MidLetter | MidNumLetQ) AHLetter
+	rules = append(rules, segmenter.ChainRule{
+		Entry: ahletterPlusZWJ,
+		Steps: []segmenter.ChainStep{
+			{Props: midLetterQ, State: uint8(AHL_MidLetter)},
+		},
 	})
 
-	// WB7c: HL_DQ × HebrewLetter
-	rules = append(rules, segmenter.Rule{
-		Left: p(pHL_DQ), Right: p(idx(HebrewLetter)), Break: false,
+	// WB7: AHLetter (MidLetter | MidNumLetQ) × AHLetter
+	ahlOverrides := map[uint8]uint8{
+		Extend: idx(AHL_MidLetter),
+		Format: idx(AHL_MidLetter),
+		ZWJ:    idx(AHL_MidLetter),
+	}
+	for _, a := range ahletter {
+		ahlOverrides[a] = segmenter.Keep
+	}
+	rules = append(rules, segmenter.OverrideRule{
+		States:    p(AHL_MidLetter),
+		Overrides: ahlOverrides,
+		WipeValue: segmenter.NoMatch,
+	})
+	hlOverrides := map[uint8]uint8{
+		Extend: idx(HL_MidLetter),
+		Format: idx(HL_MidLetter),
+		ZWJ:    idx(HL_MidLetter),
+	}
+	for _, a := range ahletter {
+		hlOverrides[a] = segmenter.Keep
+	}
+	rules = append(rules, segmenter.OverrideRule{
+		States:    p(HL_MidLetter),
+		Overrides: hlOverrides,
+		WipeValue: segmenter.NoMatch,
+	})
+
+	// WB7a: Hebrew_Letter × Single_Quote
+	rules = append(rules, segmenter.SimpleRule{Left: hebrewPlusZWJ, Right: p(Single_Quote), Break: false})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: hebrewPlusZWJ,
+		Steps: []segmenter.ChainStep{
+			{Props: p(Single_Quote), State: uint8(AHL_MidLetter), Interm: segmenter.IntermTrue},
+		},
+		Interm: true,
+	})
+
+	// WB7b: Hebrew_Letter × Double_Quote Hebrew_Letter
+	rules = append(rules, segmenter.ChainRule{
+		Entry: hebrewPlusZWJ,
+		Steps: []segmenter.ChainStep{
+			{Props: p(Double_Quote), State: uint8(HL_DQ)},
+		},
+	})
+
+	// WB7c: Hebrew_Letter Double_Quote × Hebrew_Letter
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(HL_DQ),
+		Overrides: map[uint8]uint8{
+			Hebrew_Letter: segmenter.Keep,
+			Extend:        idx(HL_DQ),
+			Format:        idx(HL_DQ),
+			ZWJ:           idx(HL_DQ),
+		},
+		WipeValue: segmenter.NoMatch,
 	})
 
 	// WB8: Numeric × Numeric
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(Numeric), pNumeric_ZWJ), Right: p(idx(Numeric)), Break: false,
-	})
+	rules = append(rules, segmenter.SimpleRule{Left: numericPlusZWJ, Right: p(Numeric), Break: false})
 
 	// WB9: AHLetter × Numeric
-	rules = append(rules, segmenter.Rule{Left: flatAHLetter, Right: p(idx(Numeric)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: ahletterPlusZWJ, Right: p(Numeric), Break: false})
 
 	// WB10: Numeric × AHLetter
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(Numeric), pNumeric_ZWJ), Right: p(idx(ALetter), idx(HebrewLetter)), Break: false,
+	rules = append(rules, segmenter.SimpleRule{Left: numericPlusZWJ, Right: ahletter, Break: false})
+
+	// WB11: Numeric (MidNum | MidNumLetQ) × Numeric
+	rules = append(rules, segmenter.OverrideRule{
+		States: p(Num_MidNum),
+		Overrides: map[uint8]uint8{
+			Numeric: segmenter.Keep,
+			Extend:  idx(Num_MidNum),
+			Format:  idx(Num_MidNum),
+			ZWJ:     idx(Num_MidNum),
+		},
+		WipeValue: segmenter.NoMatch,
 	})
 
-	// WB11: Num_MidNum × Numeric
-	rules = append(rules, segmenter.Rule{Left: p(pNum_MidNum), Right: p(idx(Numeric)), Break: false})
+	// WB12: Numeric × (MidNum | MidNumLetQ) Numeric
+	rules = append(rules, segmenter.ChainRule{
+		Entry: numericPlusZWJ,
+		Steps: []segmenter.ChainStep{
+			{Props: midNumQ, State: uint8(Num_MidNum)},
+		},
+	})
 
 	// WB13: Katakana × Katakana
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(Katakana), pKatakana_ZWJ), Right: p(idx(Katakana)), Break: false,
+	rules = append(rules, segmenter.SimpleRule{Left: katakanaPlusZWJ, Right: p(Katakana), Break: false})
+
+	// WB13a: (AHLetter | Numeric | Katakana | ExtendNumLet) × ExtendNumLet
+	rules = append(rules, segmenter.SimpleRule{
+		Left:  wb13aLeft,
+		Right: p(ExtendNumLet), Break: false,
 	})
 
-	// WB13a: (ALetter|HebrewLetter|Numeric|Katakana|ExtendNumLet + _ZWJ) × ExtendNumLet
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(ALetter), idx(HebrewLetter), idx(Numeric), idx(Katakana), idx(ExtendNumLet),
-			pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
-			pKatakana_ZWJ, pExtendNumLet_ZWJ),
-		Right: p(idx(ExtendNumLet)), Break: false,
+	// WB13b: ExtendNumLet × (AHLetter | Numeric | Katakana)
+	rules = append(rules, segmenter.SimpleRule{
+		Left:  extNumLetPlusZWJ,
+		Right: p(ALetter, Hebrew_Letter, ALetter_Extended_Pictographic, Numeric, Katakana),
+		Break: false,
 	})
 
-	// WB13b: ExtendNumLet × (ALetter|HebrewLetter|Numeric|Katakana)
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(ExtendNumLet), pExtendNumLet_ZWJ),
-		Right: p(idx(ALetter), idx(HebrewLetter), idx(Numeric), idx(Katakana)), Break: false,
+	// WB15: sot (RI RI)* RI × RI
+	// WB16: [^RI] (RI RI)* RI × RI
+	rules = append(rules, segmenter.SimpleRule{Left: riPlusZWJ, Right: p(Regional_Indicator), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: p(Regional_Indicator), Break: true})
+	rules = append(rules, segmenter.ChainRule{
+		Entry: riPlusZWJ,
+		Steps: []segmenter.ChainStep{
+			{Props: p(Regional_Indicator), State: uint8(RI_RI)},
+		},
 	})
-
-	// WB15/16: RI × RI (keep), RI_RI × RI (break)
-	rules = append(rules, segmenter.Rule{
-		Left: p(idx(RI), pRegionalIndicator_ZWJ), Right: p(idx(RI)), Break: false,
-	})
-	rules = append(rules, segmenter.Rule{
-		Left: p(pRI_RI), Right: p(idx(RI)), Break: true,
+	rules = append(rules, segmenter.IgnoreRule{
+		Props:   p(RI_RI),
+		Ignored: wb4Ignored,
+		Target:  func(base, _ uint8) uint8 { return base },
 	})
 
 	// WB999: Any ÷ Any
-	rules = append(rules, segmenter.Rule{Break: true})
+	rules = append(rules, segmenter.SimpleRule{Break: true})
 
-	// Build combined states.
-	var combinedStates []segmenter.CombinedState
-	combinedStates = append(combinedStates, wb4Combined...)
-
-	flatMidNumLetQ := p(idx(MidNumLet), idx(SingleQuote))
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{ // WB6: ALetter × (MidLetter|MidNumLetQ)
-		Entry: p(idx(ALetter), pALetter_ZWJ),
-		Steps: []segmenter.ChainStep{
-			{Props: append(p(idx(MidLetter)), flatMidNumLetQ...), State: pAHL_MidLetter},
-		},
-		SelfLoop: wb4SelfLoop,
-	}.Expand()...)
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{ // WB6: HebrewLetter × (MidLetter|MidNumLet)
-		Entry: p(idx(HebrewLetter), pHebrewLetter_ZWJ),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(MidLetter), idx(MidNumLet)), State: pHL_MidLetter},
-		},
-		SelfLoop: wb4SelfLoop,
-	}.Expand()...)
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{ // WB7b: HebrewLetter × Double_Quote
-		Entry: p(idx(HebrewLetter), pHebrewLetter_ZWJ),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(DoubleQuote)), State: pHL_DQ},
-		},
-		SelfLoop: wb4SelfLoop,
-	}.Expand()...)
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{ // WB12: Numeric × (MidNum|MidNumLetQ)
-		Entry: p(idx(Numeric), pNumeric_ZWJ),
-		Steps: []segmenter.ChainStep{
-			{Props: append(p(idx(MidNum)), flatMidNumLetQ...), State: pNum_MidNum},
-		},
-		SelfLoop: wb4SelfLoop,
-	}.Expand()...)
-
-	combinedStates = append(combinedStates, segmenter.ChainRule{ // WB15/16: RI × RI
-		Entry: p(idx(RI), pRegionalIndicator_ZWJ),
-		Steps: []segmenter.ChainStep{
-			{Props: p(idx(RI)), State: pRI_RI},
-		},
-	}.Expand()...)
-
-	table := segmenter.BuildStateTable(rules, combinedStates, int(propCount))
-
-	// Fill lookahead state rows with NoMatch (rewind).
-	lookaheadStates := []uint8{pAHL_MidLetter, pHL_MidLetter, pNum_MidNum, pHL_DQ}
-	for _, ls := range lookaheadStates {
-		row := int(ls) * int(propCount)
-		for j := 0; j < int(propCount); j++ {
-			if table[row+j] == segmenter.Break {
-				table[row+j] = segmenter.NoMatch
-			}
-		}
-	}
-
-	w.WriteComment(
-		`breakTable is the word break state table.
-	breakTable[left*stride + right] encodes the action for (left, right).
-	See segmenter.BreakState for the action encoding.`)
-	fmt.Fprintf(w, "var breakTable = [...]uint8{")
-	for i, v := range table {
-		if i%int(propCount) == 0 {
-			fmt.Fprintf(w, "\n\t")
-		}
-		fmt.Fprintf(w, "%d, ", v)
-	}
-	fmt.Fprintf(w, "\n}\n\n")
-
-	w.WriteComment("stride is the number of columns in breakTable.")
-	fmt.Fprintf(w, "const stride = %d\n", int(propCount))
-}
-
-// ---------------------------------------------------------------------------
-// Word boundary rules (UAX #29) — using Class bitflags
-// ---------------------------------------------------------------------------
-
-// classRules encodes the core word boundary rules using Class bitflags.
-// Rules involving combined states (WB4 absorption, WB6/7, WB7b/c, WB11/12,
-// WB15/16) are assembled separately in genTables since they reference
-// uint8 state indices.
-//
-// References: https://www.unicode.org/reports/tr29/#Word_Boundary_Rules
-var classRules = []segmenter.ClassRule[Class]{
-	{Left: CR, Right: LF, Break: false},                    // WB3
-	{Left: Newline | CR | LF, Break: true},                 // WB3a
-	{Right: Newline | CR | LF, Break: true},                // WB3b
-	{Left: AHLetter, Right: AHLetter, Break: false},        // WB5
-}
-
-// writeProps generates prop.go with the runtime-used property constants.
-func writeProps(idx func(Class) uint8, lastCodepointProperty,
-	pALetter_ZWJ, pHebrewLetter_ZWJ, pNumeric_ZWJ,
-	pKatakana_ZWJ, pExtendNumLet_ZWJ,
-	pSOT, pEOT, propCount uint8) {
-
-	w := gen.NewCodeWriter()
-	defer w.WriteGoFile("prop.go", "word")
-
-	fmt.Fprintf(w, "const (\n")
-	fmt.Fprintf(w, "\tpropCount             uint8 = %d\n", propCount)
-	fmt.Fprintf(w, "\tlastCodepointProperty uint8 = %d\n", lastCodepointProperty)
-	fmt.Fprintf(w, "\tpSOT                  uint8 = %d\n", pSOT)
-	fmt.Fprintf(w, "\tpEOT                  uint8 = %d\n", pEOT)
-	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "\tpALetter          uint8 = %d\n", idx(ALetter))
-	fmt.Fprintf(w, "\tpHebrewLetter     uint8 = %d\n", idx(HebrewLetter))
-	fmt.Fprintf(w, "\tpKatakana         uint8 = %d\n", idx(Katakana))
-	fmt.Fprintf(w, "\tpExtendNumLet     uint8 = %d\n", idx(ExtendNumLet))
-	fmt.Fprintf(w, "\tpNumeric          uint8 = %d\n", idx(Numeric))
-	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "\tpALetter_ZWJ      uint8 = %d\n", pALetter_ZWJ)
-	fmt.Fprintf(w, "\tpHebrewLetter_ZWJ uint8 = %d\n", pHebrewLetter_ZWJ)
-	fmt.Fprintf(w, "\tpNumeric_ZWJ      uint8 = %d\n", pNumeric_ZWJ)
-	fmt.Fprintf(w, "\tpKatakana_ZWJ     uint8 = %d\n", pKatakana_ZWJ)
-	fmt.Fprintf(w, "\tpExtendNumLet_ZWJ uint8 = %d\n", pExtendNumLet_ZWJ)
-	fmt.Fprintf(w, ")\n")
+	return rules
 }

@@ -7,22 +7,6 @@ package sentence
 
 import "golang.org/x/text/internal/segmenter"
 
-// trieTable adapts the generated sentenceTrie to the segmenter.PropertyTable
-// interface.
-type trieTable struct{ t sentenceTrie }
-
-func (tt *trieTable) Lookup(b []byte) (uint8, int) { return tt.t.lookup(b) }
-
-var ruleData = &segmenter.RuleData{
-	Properties:            &trieTable{},
-	BreakTable:            breakTable[:],
-	Stride:                stride,
-	PropCount:             propCount,
-	LastCodepointProperty: lastCodepointProperty,
-	SOT:                   pSOT,
-	EOT:                   pEOT,
-}
-
 // Segmenter iterates over the sentences in a byte slice.
 // The usage pattern is:
 //
@@ -37,7 +21,7 @@ type Segmenter struct {
 // NewSegmenter returns a Segmenter that iterates over the sentences
 // in the given input.
 func NewSegmenter(input []byte) *Segmenter {
-	return &Segmenter{s: segmenter.New(ruleData, input)}
+	return &Segmenter{s: segmenter.New(&ruleData, input)}
 }
 
 // isSafeASCII reports whether b is an ASCII byte that never participates in
@@ -51,15 +35,15 @@ func isSafeASCII(b byte) bool {
 // asciiProp returns the sentence break property for a safe ASCII byte.
 func asciiProp(b byte) uint8 {
 	if b >= 'a' && b <= 'z' {
-		return pLower
+		return uint8(Lower)
 	}
 	if b >= 'A' && b <= 'Z' {
-		return pUpper
+		return uint8(Upper)
 	}
 	if b >= '0' && b <= '9' {
-		return pNumeric
+		return uint8(Numeric)
 	}
-	return pSp // space
+	return uint8(Sp)
 }
 
 // Next advances to the next sentence boundary segment. It returns false when
@@ -71,22 +55,16 @@ func (se *Segmenter) Next() bool {
 		return false
 	}
 
-	// ASCII fast path: scan past contiguous safe ASCII bytes ([a-zA-Z0-9 ]).
-	// These never trigger sentence breaks between each other.
 	end := pos
 	for end < len(input) && isSafeASCII(input[end]) {
 		end++
 	}
 
 	if end >= len(input) {
-		// Entire remaining input is safe ASCII — one sentence.
 		se.s.FastForward(end, asciiProp(input[end-1]))
 		return true
 	}
 
-	// Back up one byte so the engine has correct leftProp context. The
-	// engine's Next will read the backed-up byte via trie lookup (a single
-	// array index for ASCII).
 	if end > pos {
 		se.s.SetEnd(end - 1)
 	}
