@@ -272,6 +272,16 @@ func TestRegionalIndicator(t *testing.T) {
 			[]string{"\U0001F1E9\U0001F1EA", "\U0001F1FA\U0001F1F8"}},
 		{"three_RI", "\U0001F1E9\U0001F1EA\U0001F1FA",
 			[]string{"\U0001F1E9\U0001F1EA", "\U0001F1FA"}},
+		{"RI_pair_then_EB", "\U0001F1E9\U0001F1EA\U0001F3F3",
+			[]string{"\U0001F1E9\U0001F1EA", "\U0001F3F3"}},
+		{"RI_pair_then_AL", "\U0001F1E9\U0001F1EAa",
+			[]string{"\U0001F1E9\U0001F1EA", "a"}},
+		{"RI_pair_then_ID", "\U0001F1E9\U0001F1EA\u4E00",
+			[]string{"\U0001F1E9\U0001F1EA", "\u4E00"}},
+		{"EB_EM_RI_pair", "\U0001F44D\U0001F3FD\U0001F1E9\U0001F1EA",
+			[]string{"\U0001F44D\U0001F3FD", "\U0001F1E9\U0001F1EA"}},
+		{"RI_pair_then_rainbow_flag", "\U0001F1E9\U0001F1EA\U0001F3F3\uFE0F\u200D\U0001F308",
+			[]string{"\U0001F1E9\U0001F1EA", "\U0001F3F3\uFE0F\u200D\U0001F308"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

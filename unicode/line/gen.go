@@ -516,6 +516,7 @@ func genTables() {
 		Steps: []segmenter.ChainStep{
 			{Props: p(idx(RI)), State: pRI_RI},
 		},
+		Interm: true,
 	}.Expand()...)
 
 	// LB25 (tailored): NU (NU|SY|IS)* × (NU|SY|IS|CL|CP)
