@@ -8,7 +8,6 @@ package word
 import (
 	"golang.org/x/text/internal/segmenter"
 	"golang.org/x/text/language"
-	"unicode/utf8"
 )
 
 // WordType classifies a word segment.
@@ -56,13 +55,12 @@ func WithLocale(t language.Tag) Option {
 // Finnish and Swedish word segmentation. In standard UAX #29, colon is
 // MidLetter, so "EU:ssa" is one word. Finnish/Swedish treat colon as a
 // word break.
-func finnishOverride(input []byte) (uint8, int) {
-	r, sz := utf8.DecodeRune(input)
+func finnishOverride(prop uint8, r rune) uint8 {
 	switch r {
 	case ':', '\uFE55', '\uFF1A':
-		return Other, sz
+		return Other
 	}
-	return 0, -1
+	return prop
 }
 
 // NewSegmenter returns a Segmenter that iterates over the words

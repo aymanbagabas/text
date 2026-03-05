@@ -19,7 +19,8 @@ import (
 )
 
 // lbMap maps Line_Break UCD property value strings to property indices.
-// AI resolves to AL and CJ resolves to NS at parse time (LB1).
+// AI and CJ are stored as distinct properties so CSS line-break modes can
+// remap them at runtime.
 var lbMap = map[string]uint8{
 	"XX":  XX,
 	"BK":  BK,
@@ -53,14 +54,14 @@ var lbMap = map[string]uint8{
 	"RI":  RI,
 	"SA":  SA,
 	"HL":  HL,
-	"CJ":  NS, // LB1: CJ → NS
+	"CJ":  CJ,
 	"AK":  AK,
 	"AP":  AP,
 	"AS":  AS,
 	"VF":  VF,
 	"VI":  VI,
 	"CP":  CP,
-	"AI":  AL, // LB1: AI → AL
+	"AI":  AI,
 	"SG":  XX,
 	"CM":  CM,
 	"ZWJ": ZWJ,
@@ -76,6 +77,7 @@ var lbMap = map[string]uint8{
 // Used only during generation by expandAll() and the LB9 absorption loop.
 var lb9XX = map[uint8]uint8{
 	XX:               XX_XX,
+	AI:               AI_XX,
 	AK:               AK_XX,
 	AL:               AL_XX,
 	AL_DC: AL_DC_XX,
@@ -85,6 +87,7 @@ var lb9XX = map[uint8]uint8{
 	BA:               BA_XX,
 	BB:               BB_XX,
 	CB:               CB_XX,
+	CJ:               CJ_XX,
 	CL:               CL_XX,
 	CP:               CP_XX,
 	EB:               EB_XX,
@@ -282,8 +285,8 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	idx := segmenter.IndexState
 	interm := segmenter.IntermediateState
 
-	allAlpha := expand(AL, HL, XX, SA, CM, ZWJ)
-	allAlphaTarget := expand(AL, AL_DC, HL, XX, SA, CM, ZWJ)
+	allAlpha := expand(AI, AL, HL, XX, SA, CM, ZWJ)
+	allAlphaTarget := expand(AI, AL, AL_DC, HL, XX, SA, CM, ZWJ)
 	prAll := expand(PR, PR_EA)
 	poAll := expand(PO, PO_EA)
 	opAll := expand(OP, OP_EA)
@@ -292,7 +295,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	mandatory := p(BK, CR, LF, NL)
 	clcpexissy := expand(CL, CP, EX, IS, SY)
 	quAll := expand(QU, QU_PF, QU_PI)
-	bahyns := expand(BA, HY, NS)
+	bahyns := expand(BA, HY, NS, CJ)
 	hangul := expand(JL, JV, JT, H2, H3)
 
 	var rules []segmenter.Rule
@@ -303,7 +306,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	// =========================================================================
 
 	// LB1: Assign a line breaking class to each code point of the input.
-	// (Resolved at parse time: AI→AL, CJ→NS, SA+Mn/Mc→CM.)
+	// (Resolved at parse time: SA+Mn/Mc→CM. AI and CJ are stored as distinct properties.)
 
 	// LB2: sot ×
 	rules = append(rules, segmenter.SimpleRule{Left: p(sot), Break: false})
@@ -481,7 +484,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	}
 
 	// LB16: (CL | CP) SP* × NS
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(CL, CP), CL_CP_SP), Right: expand(NS), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(CL, CP), CL_CP_SP), Right: expand(NS, CJ), Break: false})
 	rules = append(rules, segmenter.ChainRule{
 		Entry: expand(CL, CP),
 		Steps: []segmenter.ChainStep{{Props: p(SP), State: CL_CP_SP}},
@@ -728,7 +731,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: allAlphaTarget, Break: false})
 
 	// LB28a: AP × (AK | ◌ | AS), (AK | ◌ | AS) × (VF | VI), (AK | ◌ | AS) VI × (AK | ◌), (AK | ◌ | AS) × (AK | ◌ | AS) VF
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(AL_DC), AK_DC), Right: expand(AL, HL, XX, SA), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(AL_DC), AK_DC), Right: expand(AI, AL, HL, XX, SA), Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: expand(AP), Right: expand(AK, AL_DC, AS), Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: expand(AK, AL_DC, AS), Right: expand(VF), Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Right: expand(AK, AL_DC), Break: false})
@@ -749,7 +752,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	})
 
 	// LB29: IS × (AL | HL)
-	rules = append(rules, segmenter.SimpleRule{Left: expand(IS), Right: expand(AL, HL, SA, XX, AL_DC), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(IS), Right: expand(AI, AL, HL, SA, XX, AL_DC), Break: false})
 
 	// LB30: (AL | HL | NU) × OP_nonEA, CP_nonEA × (AL | HL | NU)
 	rules = append(rules, segmenter.SimpleRule{

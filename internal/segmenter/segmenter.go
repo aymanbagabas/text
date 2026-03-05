@@ -94,7 +94,7 @@ type Segmenter struct {
 	start          int
 	end            int
 	boundaryProp   uint8
-	overrideLookup func([]byte) (uint8, int)
+	overrideLookup func(uint8, rune) uint8
 }
 
 // New returns a Segmenter that iterates over segments in input
@@ -103,24 +103,23 @@ func New(data *RuleBreakData, input []byte) *Segmenter {
 	return &Segmenter{data: data, input: input}
 }
 
-// SetOverrideLookup sets an optional locale-specific property override.
-// The override function returns (property, size) for overridden codepoints.
-// A negative size signals "no override"; the base PropertyLookup is used
-// instead.
-func (s *Segmenter) SetOverrideLookup(fn func([]byte) (uint8, int)) {
+// SetOverrideLookup sets an optional property override function.
+// The override receives the base property (from the trie) and the decoded
+// rune, and returns the effective property. To leave a codepoint unchanged,
+// return the base property as-is.
+func (s *Segmenter) SetOverrideLookup(fn func(uint8, rune) uint8) {
 	s.overrideLookup = fn
 }
 
 // lookupProperty returns the break property and byte size for the codepoint
-// at the start of input. If an override is set and returns a non-negative
-// size, its property value is used; otherwise the base PropertyLookup is used.
+// at the start of input. If an override is set, it is called with the base
+// property and decoded rune to produce the effective property.
 func (s *Segmenter) lookupProperty(input []byte) (uint8, int) {
+	prop, sz := s.data.PropertyLookup(input)
 	if s.overrideLookup != nil {
-		if prop, sz := s.overrideLookup(input); sz >= 0 {
-			return prop, sz
-		}
+		prop = s.overrideLookup(prop, decodeRune(input, sz))
 	}
-	return s.data.PropertyLookup(input)
+	return prop, sz
 }
 
 // Next advances to the next segment.
@@ -256,4 +255,20 @@ func (s *Segmenter) FastForward(end int, prop uint8) {
 	s.boundaryProp = prop
 }
 
-
+// decodeRune extracts the rune from input given its UTF-8 byte length sz.
+// This avoids importing unicode/utf8 and re-scanning leading bytes that
+// PropertyLookup already consumed.
+func decodeRune(b []byte, sz int) rune {
+	switch sz {
+	case 1:
+		return rune(b[0])
+	case 2:
+		return rune(b[0]&0x1F)<<6 | rune(b[1]&0x3F)
+	case 3:
+		return rune(b[0]&0x0F)<<12 | rune(b[1]&0x3F)<<6 | rune(b[2]&0x3F)
+	case 4:
+		return rune(b[0]&0x07)<<18 | rune(b[1]&0x3F)<<12 | rune(b[2]&0x3F)<<6 | rune(b[3]&0x3F)
+	default:
+		return '\uFFFD'
+	}
+}

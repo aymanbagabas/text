@@ -550,13 +550,250 @@ func TestB2(t *testing.T) {
 	}
 }
 
-func segments(data []byte) []string {
+func segments(data []byte, opts ...Option) []string {
 	var out []string
-	seg := NewSegmenter(data)
+	seg := NewSegmenter(data, opts...)
 	for seg.Next() {
 		out = append(out, seg.Text())
 	}
 	return out
+}
+
+// TestCSSStrictness verifies the CSS line-break strictness levels.
+// CJ codepoints (e.g. small kana) are treated as NS under Strict (default)
+// but as ID under Normal/Loose, allowing breaks before them.
+func TestCSSStrictness(t *testing.T) {
+	// U+30C3 (ッ) is a CJ codepoint (Katakana small tsu).
+	// U+4E00 (一) is ID. Under Strict, CJ acts as NS (no break before).
+	// Under Normal/Loose, CJ acts as ID (break before allowed).
+
+	tests := []struct {
+		name       string
+		input      string
+		strictness Strictness
+		want       []string
+	}{
+		{
+			name:       "strict_CJ_no_break",
+			input:      "\u4E00\u30C3",
+			strictness: Strict,
+			want:       []string{"\u4E00\u30C3"},
+		},
+		{
+			name:       "normal_CJ_break",
+			input:      "\u4E00\u30C3",
+			strictness: Normal,
+			want:       []string{"\u4E00", "\u30C3"},
+		},
+		{
+			name:       "loose_CJ_break",
+			input:      "\u4E00\u30C3",
+			strictness: Loose,
+			want:       []string{"\u4E00", "\u30C3"},
+		},
+		{
+			name:       "strict_multiple_CJ",
+			input:      "\u4E00\u30C3\u30C3",
+			strictness: Strict,
+			want:       []string{"\u4E00\u30C3\u30C3"},
+		},
+		{
+			name:       "normal_multiple_CJ",
+			input:      "\u4E00\u30C3\u30C3",
+			strictness: Normal,
+			want:       []string{"\u4E00", "\u30C3", "\u30C3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input), WithStrictness(tt.strictness))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
+			}
+		})
+	}
+}
+
+// TestCSSWordBreak verifies the CSS word-break property.
+func TestCSSWordBreak(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wordBreak WordBreak
+		want      []string
+	}{
+		{
+			name:      "normal_AL_no_break",
+			input:     "hello",
+			wordBreak: WordNormal,
+			want:      []string{"hello"},
+		},
+		{
+			name:      "break_all_AL_becomes_ID",
+			input:     "he",
+			wordBreak: WordBreakAll,
+			want:      []string{"h", "e"},
+		},
+		{
+			name:      "break_all_latin_ideograph",
+			input:     "a\u4E00",
+			wordBreak: WordBreakAll,
+			want:      []string{"a", "\u4E00"},
+		},
+		{
+			name:      "keep_all_ID_no_break",
+			input:     "\u4E00\u4E8C",
+			wordBreak: WordKeepAll,
+			want:      []string{"\u4E00\u4E8C"},
+		},
+		{
+			name:      "keep_all_ID_three",
+			input:     "\u4E00\u4E8C\u4E09",
+			wordBreak: WordKeepAll,
+			want:      []string{"\u4E00\u4E8C\u4E09"},
+		},
+		{
+			name:      "normal_ID_breaks",
+			input:     "\u4E00\u4E8C\u4E09",
+			wordBreak: WordNormal,
+			want:      []string{"\u4E00", "\u4E8C", "\u4E09"},
+		},
+		{
+			name:      "keep_all_CJ_no_break",
+			input:     "\u4E00\u30C3",
+			wordBreak: WordKeepAll,
+			want:      []string{"\u4E00\u30C3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input), WithWordBreak(tt.wordBreak))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
+			}
+		})
+	}
+}
+
+// TestCSSComposed verifies combining Strictness and WordBreak options.
+func TestCSSComposed(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		strictness Strictness
+		wordBreak  WordBreak
+		want       []string
+	}{
+		{
+			name:       "normal_keep_all",
+			input:      "\u4E00\u4E8C\u30C3",
+			strictness: Normal,
+			wordBreak:  WordKeepAll,
+			want:       []string{"\u4E00\u4E8C\u30C3"},
+		},
+		{
+			name:       "strict_keep_all",
+			input:      "\u4E00\u4E8C",
+			strictness: Strict,
+			wordBreak:  WordKeepAll,
+			want:       []string{"\u4E00\u4E8C"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input),
+				WithStrictness(tt.strictness),
+				WithWordBreak(tt.wordBreak))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
+			}
+		})
+	}
+}
+
+// TestCSSAnywhere verifies that line-break: anywhere breaks after every
+// extended grapheme cluster (typographic character unit).
+func TestCSSAnywhere(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "ascii_letters",
+			input: "abc",
+			want:  []string{"a", "b", "c"},
+		},
+		{
+			name:  "ideographs",
+			input: "\u4E00\u4E8C\u4E09",
+			want:  []string{"\u4E00", "\u4E8C", "\u4E09"},
+		},
+		{
+			name:  "mixed_latin_cjk",
+			input: "a\u4E00b",
+			want:  []string{"a", "\u4E00", "b"},
+		},
+		{
+			name:  "space_breaks",
+			input: "a b",
+			want:  []string{"a", " ", "b"},
+		},
+		{
+			name:  "grapheme_cluster_preserved",
+			input: "e\u0301",
+			want:  []string{"e\u0301"},
+		},
+		{
+			name:  "emoji_zwj_sequence",
+			input: "\U0001F468\u200D\U0001F469\u200D\U0001F467",
+			want:  []string{"\U0001F468\u200D\U0001F469\u200D\U0001F467"},
+		},
+		{
+			name:  "regional_indicator_pair",
+			input: "\U0001F1FA\U0001F1F8",
+			want:  []string{"\U0001F1FA\U0001F1F8"},
+		},
+		{
+			name:  "crlf_kept_together",
+			input: "a\r\nb",
+			want:  []string{"a", "\r\n", "b"},
+		},
+		{
+			name:  "lf_alone",
+			input: "a\nb",
+			want:  []string{"a", "\n", "b"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := segments([]byte(tt.input), WithStrictness(Anywhere))
+			if !slicesEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
+			}
+		})
+	}
+}
+
+// TestCSSDefaultUnchanged verifies that default (Strict + WordNormal) produces
+// the same results as calling NewSegmenter without options.
+func TestCSSDefaultUnchanged(t *testing.T) {
+	inputs := []string{
+		"Hello, world!",
+		"\u4E00\u4E8C\u4E09",
+		"$1,234.56%",
+		"\u05D0-\u05D1",
+		"\r\n\r\n",
+	}
+	for _, s := range inputs {
+		data := []byte(s)
+		got := segments(data, WithStrictness(Strict), WithWordBreak(WordNormal))
+		want := segments(data)
+		if !slicesEqual(got, want) {
+			t.Errorf("input %q: explicit defaults differ from no-opts\ngot  %v\nwant %v",
+				s, fmtSegments(got), fmtSegments(want))
+		}
+	}
 }
 
 func slicesEqual(a, b []string) bool {

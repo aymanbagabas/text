@@ -8,7 +8,6 @@ package sentence
 import (
 	"golang.org/x/text/internal/segmenter"
 	"golang.org/x/text/language"
-	"unicode/utf8"
 )
 
 // Segmenter iterates over the sentences in a byte slice.
@@ -38,13 +37,12 @@ func WithLocale(t language.Tag) Option {
 // greekOverride remaps U+003B (semicolon) and U+037E (Greek question mark)
 // to STerm for Greek sentence segmentation. In standard UAX #29 these are
 // Other; Greek uses them as sentence terminators.
-func greekOverride(input []byte) (uint8, int) {
-	r, sz := utf8.DecodeRune(input)
+func greekOverride(prop uint8, r rune) uint8 {
 	switch r {
 	case ';', '\u037E':
-		return STerm, sz
+		return STerm
 	}
-	return 0, -1
+	return prop
 }
 
 // NewSegmenter returns a Segmenter that iterates over the sentences

@@ -15,10 +15,12 @@ package main
 // these values are assigned consistently between gen.go (which writes the trie)
 // and trieval.go (which reads it at runtime).
 //
-// AI and CJ are NOT listed here: AI resolves to AL and CJ resolves to NS
-// at parse time (LB1). They never appear as property values in the trie or table.
+// AI and CJ are stored as distinct properties so CSS line-break modes can
+// remap them at runtime. The default break rules treat AI identically to AL
+// and CJ identically to NS.
 const (
 	XX = iota // LB=XX (Unknown / default, zero value)
+	AI        // LB=AI (Ambiguous; default rules mirror AL)
 	AK        // LB=AK (Aksara)
 	AL        // LB=AL (Alphabetic)
 	AL_DC     // LB=AL with dotted circle (U+25CC)
@@ -29,6 +31,7 @@ const (
 	BB        // LB=BB (Break Before)
 	BK        // LB=BK (Mandatory Break)
 	CB        // LB=CB (Contingent Break)
+	CJ        // LB=CJ (Conditional Japanese Starter; default rules mirror NS)
 	CL        // LB=CL (Close Punctuation)
 	CM        // LB=CM (Combining Mark)
 	CP        // LB=CP (Close Parenthesis)
@@ -81,7 +84,8 @@ const (
 // Only non-excluded base properties have absorption states.
 // Excluded (BK, CR, LF, NL, SP, ZW, CM, ZWJ) do not absorb per LB9.
 const (
-	AK_XX         = lastBaseProperty + 1 + iota
+	AI_XX         = lastBaseProperty + 1 + iota
+	AK_XX
 	AL_XX
 	AL_DC_XX
 	AP_XX
@@ -90,6 +94,7 @@ const (
 	BA_XX
 	BB_XX
 	CB_XX
+	CJ_XX
 	CL_XX
 	CP_XX
 	EB_XX
