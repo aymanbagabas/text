@@ -8,7 +8,6 @@ package grapheme
 
 import (
 	"golang.org/x/text/internal/segmenter"
-	"golang.org/x/text/language"
 )
 
 // Segmenter iterates over the grapheme clusters in a byte slice.
@@ -22,26 +21,9 @@ type Segmenter struct {
 	s *segmenter.Segmenter
 }
 
-type options struct {
-	locale language.Tag
-}
-
-// Option configures a [Segmenter].
-type Option func(*options)
-
-// WithLocale sets the locale for locale-tailored segmentation.
-func WithLocale(t language.Tag) Option {
-	return func(o *options) { o.locale = t }
-}
-
 // NewSegmenter returns a Segmenter that iterates over the grapheme clusters
 // in the given input.
-func NewSegmenter(input []byte, opts ...Option) *Segmenter {
-	var o options
-	for _, fn := range opts {
-		fn(&o)
-	}
-	_ = o
+func NewSegmenter(input []byte) *Segmenter {
 	return &Segmenter{s: segmenter.New(&ruleData, input)}
 }
 
