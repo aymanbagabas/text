@@ -8,7 +8,10 @@
 // returning segments between mandatory or allowed break positions.
 package line
 
-import "golang.org/x/text/internal/segmenter"
+import (
+	"golang.org/x/text/internal/segmenter"
+	"golang.org/x/text/language"
+)
 
 // Segmenter iterates over the line break segments in a byte slice.
 // The usage pattern is:
@@ -21,9 +24,26 @@ type Segmenter struct {
 	s *segmenter.Segmenter
 }
 
+type options struct {
+	locale language.Tag
+}
+
+// Option configures a [Segmenter].
+type Option func(*options)
+
+// WithLocale sets the locale for locale-tailored segmentation.
+func WithLocale(t language.Tag) Option {
+	return func(o *options) { o.locale = t }
+}
+
 // NewSegmenter returns a Segmenter that iterates over the line break
 // segments in the given input.
-func NewSegmenter(input []byte) *Segmenter {
+func NewSegmenter(input []byte, opts ...Option) *Segmenter {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+	_ = o
 	return &Segmenter{s: segmenter.New(&ruleData, input)}
 }
 

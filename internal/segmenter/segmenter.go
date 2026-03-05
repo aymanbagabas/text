@@ -89,18 +89,38 @@ type RuleBreakData struct {
 
 // Segmenter iterates over segments in text.
 type Segmenter struct {
-	data  *RuleBreakData
-	input []byte
-	start int
-	end   int
-
-	boundaryProp uint8
+	data           *RuleBreakData
+	input          []byte
+	start          int
+	end            int
+	boundaryProp   uint8
+	overrideLookup func([]byte) (uint8, int)
 }
 
 // New returns a Segmenter that iterates over segments in input
 // according to data.
 func New(data *RuleBreakData, input []byte) *Segmenter {
 	return &Segmenter{data: data, input: input}
+}
+
+// SetOverrideLookup sets an optional locale-specific property override.
+// The override function returns (property, size) for overridden codepoints.
+// A negative size signals "no override"; the base PropertyLookup is used
+// instead.
+func (s *Segmenter) SetOverrideLookup(fn func([]byte) (uint8, int)) {
+	s.overrideLookup = fn
+}
+
+// lookupProperty returns the break property and byte size for the codepoint
+// at the start of input. If an override is set and returns a non-negative
+// size, its property value is used; otherwise the base PropertyLookup is used.
+func (s *Segmenter) lookupProperty(input []byte) (uint8, int) {
+	if s.overrideLookup != nil {
+		if prop, sz := s.overrideLookup(input); sz >= 0 {
+			return prop, sz
+		}
+	}
+	return s.data.PropertyLookup(input)
 }
 
 // Next advances to the next segment.
@@ -114,7 +134,7 @@ func (s *Segmenter) Next() bool {
 	var leftProp uint8
 	if s.end == 0 {
 		leftProp = s.data.SOTProperty
-		rightProp, size := s.data.PropertyLookup(s.input[s.end:])
+		rightProp, size := s.lookupProperty(s.input[s.end:])
 		state := s.data.BreakStateTable[int(leftProp)*int(s.data.PropertyCount)+int(rightProp)]
 		s.end += size
 		switch state {
@@ -132,7 +152,7 @@ func (s *Segmenter) Next() bool {
 		}
 	} else {
 		var size int
-		leftProp, size = s.data.PropertyLookup(s.input[s.end:])
+		leftProp, size = s.lookupProperty(s.input[s.end:])
 		s.end += size
 	}
 
@@ -140,7 +160,7 @@ func (s *Segmenter) Next() bool {
 	markerLeftProp := leftProp
 
 	for s.end < len(s.input) {
-		rightProp, size := s.data.PropertyLookup(s.input[s.end:])
+		rightProp, size := s.lookupProperty(s.input[s.end:])
 		state := s.data.BreakStateTable[int(leftProp)*int(s.data.PropertyCount)+int(rightProp)]
 
 		switch state {
@@ -161,7 +181,7 @@ func (s *Segmenter) Next() bool {
 			s.end = marker
 			s.boundaryProp = markerLeftProp
 			if s.end == s.start {
-				_, sz := s.data.PropertyLookup(s.input[s.end:])
+				_, sz := s.lookupProperty(s.input[s.end:])
 				s.end += sz
 			}
 			return true

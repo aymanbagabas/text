@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/text/internal/gen"
 	"golang.org/x/text/internal/testtext"
+	"golang.org/x/text/language"
 )
 
 func TestConformance(t *testing.T) {
@@ -132,4 +133,64 @@ func fmtSegments(segs []string) []string {
 		out[i] = "[" + strings.Join(runes, " ") + "]"
 	}
 	return out
+}
+
+func TestFinnishWordBreak(t *testing.T) {
+	input := []byte("EU:ssa on jäseniä")
+
+	seg := NewSegmenter(input)
+	var defaultWords []string
+	for seg.Next() {
+		defaultWords = append(defaultWords, seg.Text())
+	}
+
+	seg = NewSegmenter(input, WithLocale(language.Finnish))
+	var finnishWords []string
+	for seg.Next() {
+		finnishWords = append(finnishWords, seg.Text())
+	}
+
+	hasColon := false
+	for _, w := range defaultWords {
+		if w == "EU:ssa" {
+			hasColon = true
+		}
+	}
+	if !hasColon {
+		t.Errorf("default segmenter: expected 'EU:ssa' as one word, got %v", defaultWords)
+	}
+
+	for _, w := range finnishWords {
+		if w == "EU:ssa" {
+			t.Errorf("Finnish segmenter: 'EU:ssa' should be split at colon, got %v", finnishWords)
+			break
+		}
+	}
+
+	hasEU := false
+	for _, w := range finnishWords {
+		if w == "EU" {
+			hasEU = true
+		}
+	}
+	if !hasEU {
+		t.Errorf("Finnish segmenter: expected 'EU' as separate word, got %v", finnishWords)
+	}
+}
+
+func TestSwedishWordBreak(t *testing.T) {
+	input := []byte("kl:n")
+
+	seg := NewSegmenter(input, WithLocale(language.Swedish))
+	var words []string
+	for seg.Next() {
+		words = append(words, seg.Text())
+	}
+
+	for _, w := range words {
+		if w == "kl:n" {
+			t.Errorf("Swedish segmenter: 'kl:n' should be split at colon, got %v", words)
+			break
+		}
+	}
 }

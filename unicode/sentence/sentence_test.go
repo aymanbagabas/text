@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/text/internal/gen"
 	"golang.org/x/text/internal/testtext"
+	"golang.org/x/text/language"
 )
 
 func TestConformance(t *testing.T) {
@@ -132,4 +133,32 @@ func fmtSegments(segs []string) []string {
 		out[i] = "[" + strings.Join(runes, " ") + "]"
 	}
 	return out
+}
+
+func TestGreekSentenceBreak(t *testing.T) {
+	// In Greek, U+003B (semicolon) is a question mark and should terminate sentences.
+	// Default UAX #29 treats it as Other (no sentence break).
+	input := []byte("Τι κάνεις; Καλά είμαι.")
+
+	seg := NewSegmenter(input)
+	var defaultSentences []string
+	for seg.Next() {
+		defaultSentences = append(defaultSentences, seg.Text())
+	}
+
+	seg = NewSegmenter(input, WithLocale(language.Greek))
+	var greekSentences []string
+	for seg.Next() {
+		greekSentences = append(greekSentences, seg.Text())
+	}
+
+	if len(defaultSentences) != 1 {
+		t.Errorf("default segmenter: expected 1 sentence (no break at semicolon), got %d: %v",
+			len(defaultSentences), defaultSentences)
+	}
+
+	if len(greekSentences) < 2 {
+		t.Errorf("Greek segmenter: expected break at semicolon, got %d sentences: %v",
+			len(greekSentences), greekSentences)
+	}
 }

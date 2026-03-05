@@ -5,7 +5,11 @@
 // Package sentence implements Unicode sentence segmentation as defined by UAX #29.
 package sentence
 
-import "golang.org/x/text/internal/segmenter"
+import (
+	"golang.org/x/text/internal/segmenter"
+	"golang.org/x/text/language"
+	"unicode/utf8"
+)
 
 // Segmenter iterates over the sentences in a byte slice.
 // The usage pattern is:
@@ -18,10 +22,47 @@ type Segmenter struct {
 	s *segmenter.Segmenter
 }
 
+type options struct {
+	locale language.Tag
+}
+
+// Option configures a [Segmenter].
+type Option func(*options)
+
+// WithLocale sets the locale for locale-tailored segmentation.
+// Supported locales: Greek (el).
+func WithLocale(t language.Tag) Option {
+	return func(o *options) { o.locale = t }
+}
+
+// greekOverride remaps U+003B (semicolon) and U+037E (Greek question mark)
+// to STerm for Greek sentence segmentation. In standard UAX #29 these are
+// Other; Greek uses them as sentence terminators.
+func greekOverride(input []byte) (uint8, int) {
+	r, sz := utf8.DecodeRune(input)
+	switch r {
+	case ';', '\u037E':
+		return STerm, sz
+	}
+	return 0, -1
+}
+
 // NewSegmenter returns a Segmenter that iterates over the sentences
 // in the given input.
-func NewSegmenter(input []byte) *Segmenter {
-	return &Segmenter{s: segmenter.New(&ruleData, input)}
+func NewSegmenter(input []byte, opts ...Option) *Segmenter {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+	seg := segmenter.New(&ruleData, input)
+	if o.locale != (language.Tag{}) {
+		base, _ := o.locale.Base()
+		switch base {
+		case language.MustParseBase("el"):
+			seg.SetOverrideLookup(greekOverride)
+		}
+	}
+	return &Segmenter{s: seg}
 }
 
 // isSafeASCII reports whether b is an ASCII byte that never participates in

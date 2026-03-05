@@ -5,7 +5,11 @@
 // Package word implements Unicode word segmentation as defined by UAX #29.
 package word
 
-import "golang.org/x/text/internal/segmenter"
+import (
+	"golang.org/x/text/internal/segmenter"
+	"golang.org/x/text/language"
+	"unicode/utf8"
+)
 
 // WordType classifies a word segment.
 type WordType uint8
@@ -35,10 +39,48 @@ type Segmenter struct {
 	s *segmenter.Segmenter
 }
 
+type options struct {
+	locale language.Tag
+}
+
+// Option configures a [Segmenter].
+type Option func(*options)
+
+// WithLocale sets the locale for locale-tailored segmentation.
+// Supported locales: Finnish (fi), Swedish (sv).
+func WithLocale(t language.Tag) Option {
+	return func(o *options) { o.locale = t }
+}
+
+// finnishOverride remaps colon characters from MidLetter to Other for
+// Finnish and Swedish word segmentation. In standard UAX #29, colon is
+// MidLetter, so "EU:ssa" is one word. Finnish/Swedish treat colon as a
+// word break.
+func finnishOverride(input []byte) (uint8, int) {
+	r, sz := utf8.DecodeRune(input)
+	switch r {
+	case ':', '\uFE55', '\uFF1A':
+		return Other, sz
+	}
+	return 0, -1
+}
+
 // NewSegmenter returns a Segmenter that iterates over the words
 // in the given input.
-func NewSegmenter(input []byte) *Segmenter {
-	return &Segmenter{s: segmenter.New(&ruleData, input)}
+func NewSegmenter(input []byte, opts ...Option) *Segmenter {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+	seg := segmenter.New(&ruleData, input)
+	if o.locale != (language.Tag{}) {
+		base, _ := o.locale.Base()
+		switch base {
+		case language.MustParseBase("fi"), language.MustParseBase("sv"):
+			seg.SetOverrideLookup(finnishOverride)
+		}
+	}
+	return &Segmenter{s: seg}
 }
 
 func isAlphaNum(b byte) bool {
