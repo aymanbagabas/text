@@ -22,15 +22,28 @@ const (
 // IsWordLike reports whether t represents a word-like segment (Letter or Number).
 func IsWordLike(t WordType) bool { return t != WordNone }
 
-// wordTypeTable maps simple property indices to WordType.
-// Indices correspond to the Property constants in trieval.go.
+// wordTypeTable maps property indices (including combined states from
+// the state machine) to WordType. When a lookahead rolls back via
+// NoMatch, BoundaryProperty may return a combined state index rather
+// than a base codepoint property, so the table must cover those too.
 var wordTypeTable = [...]WordType{
-	Katakana:      WordLetter,
-	Hebrew_Letter: WordLetter,
-	ALetter:       WordLetter,
-	Numeric:       WordNumber,
-	ExtendNumLet:  WordLetter,
-	SA:            WordLetter,
+	Katakana:                      WordLetter,
+	Hebrew_Letter:                 WordLetter,
+	ALetter:                       WordLetter,
+	Numeric:                       WordNumber,
+	ExtendNumLet:                  WordLetter,
+	ALetter_Extended_Pictographic: WordLetter,
+	SA:                            WordLetter,
+	ALetter_ZWJ:                   WordLetter,
+	Hebrew_Letter_ZWJ:             WordLetter,
+	Numeric_ZWJ:                   WordNumber,
+	Katakana_ZWJ:                  WordLetter,
+	ExtendNumLet_ZWJ:              WordLetter,
+	ALetterEP_ZWJ:                 WordLetter,
+	AHL_MidLetter:                 WordLetter,
+	HL_MidLetter:                  WordLetter,
+	Num_MidNum:                    WordNumber,
+	HL_DQ:                         WordLetter,
 }
 
 // Segmenter iterates over the words in a byte slice.
