@@ -144,19 +144,49 @@ func buildOverride(strictness Strictness, wb WordBreak) func(uint8, rune) uint8 
 			}
 		}
 
+		if strictness == Loose {
+			switch prop {
+			case NS:
+				if isLooseNS(r) {
+					prop = ID
+				}
+			case IN:
+				prop = ID
+			}
+		}
+
 		switch wb {
 		case WordBreakAll:
 			if prop == AL || prop == AI || prop == SA {
 				prop = ID
 			}
 		case WordKeepAll:
-			if prop == ID || prop == ID_ExtPict || prop == CJ {
+			if prop == ID || prop == ID_ExtPict || prop == CJ ||
+				prop == H2 || prop == H3 || prop == JL || prop == JV || prop == JT {
 				prop = AL
 			}
 		}
 
 		return prop
 	}
+}
+
+// isLooseNS reports whether r is an NS codepoint that should be treated as
+// ID under CSS line-break: loose, allowing a break before it.
+// Per CSS Text Level 3 §5.1, this includes CJK wave dashes, iteration marks,
+// and certain centered punctuation marks.
+func isLooseNS(r rune) bool {
+	switch r {
+	case '\u301C', '\u30A0':
+		return true
+	case '\u3005', '\u303B', '\u309D', '\u309E', '\u30FD', '\u30FE':
+		return true
+	case '\u30FB', '\uFF1A', '\uFF1B', '\uFF65':
+		return true
+	case '\u203C':
+		return true
+	}
+	return r >= '\u2047' && r <= '\u2049'
 }
 
 // Next advances to the next line break segment. It returns false when the
