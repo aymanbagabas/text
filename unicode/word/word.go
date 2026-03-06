@@ -102,6 +102,12 @@ func (w *Segmenter) Next() bool {
 		return false
 	}
 
+	// ASCII fast path: scan a contiguous run of ASCII alphanumerics
+	// (ALetter/Numeric) and emit it as one segment, skipping the state machine.
+	// Only safe if the byte after the run isn't mid-word punctuation
+	// (MidLetter/MidNum/MidNumLet triggers lookahead), ExtendNumLet, another
+	// alphanumeric, or non-ASCII (could be Extend/Format/ZWJ). The boundary
+	// property is set from the last byte for correct WordType classification.
 	b := input[pos]
 	if b < 0x80 && isAlphaNum(b) {
 		end := pos + 1

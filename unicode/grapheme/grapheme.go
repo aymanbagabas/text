@@ -32,6 +32,11 @@ func NewSegmenter(input []byte) *Segmenter {
 func (g *Segmenter) Next() bool {
 	input := g.s.Input()
 	pos := g.s.End()
+
+	// ASCII fast path: non-CR/LF ASCII bytes are each their own grapheme
+	// cluster (property Other). Emit one directly, skipping the state machine.
+	// The next byte must also be ASCII to avoid splitting a base+combining-mark
+	// sequence (a non-ASCII follower could be Extend/ZWJ/SpacingMark).
 	if pos < len(input) {
 		b := input[pos]
 		if b < 0x80 && b != '\r' && b != '\n' {

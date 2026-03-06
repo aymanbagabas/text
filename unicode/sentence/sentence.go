@@ -64,9 +64,7 @@ func NewSegmenter(input []byte, opts ...Option) *Segmenter {
 }
 
 // isSafeASCII reports whether b is an ASCII byte that never participates in
-// sentence break rules: letters, digits, and space. All other ASCII bytes
-// (punctuation, control characters) may be terminators, closers, paragraph
-// separators, or other rule-relevant properties.
+// sentence break rules: letters, digits, and space.
 func isSafeASCII(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == ' '
 }
@@ -94,6 +92,12 @@ func (se *Segmenter) Next() bool {
 		return false
 	}
 
+	// ASCII fast path: skip over contiguous safe ASCII bytes (letters, digits,
+	// space) that can never trigger sentence breaks, avoiding per-byte trie
+	// lookups. If the run reaches EOF, emit it all via FastForward. Otherwise,
+	// rewind to one byte before the end of the safe run (SetEnd) so the state
+	// machine sees correct left-context when it hits the terminator, then fix
+	// up the start (SetStart) to include the skipped prefix.
 	end := pos
 	for end < len(input) && isSafeASCII(input[end]) {
 		end++
