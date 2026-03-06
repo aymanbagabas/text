@@ -15,17 +15,30 @@ import (
 	"golang.org/x/text/language"
 )
 
-func segmentsOf(input []byte, opts ...Option) []string {
+func segmentsOf(input []byte) []string {
 	var out []string
-	seg := NewSegmenter(input, opts...)
+	seg := NewSegmenter(input)
 	for seg.Next() {
 		out = append(out, seg.Text())
 	}
 	return out
 }
 
-func segmentsStr(input string, opts ...Option) []string {
-	return segmentsOf([]byte(input), opts...)
+func segmentsWithOpts(input []byte, o Options) []string {
+	var out []string
+	seg := o.NewSegmenter(input)
+	for seg.Next() {
+		out = append(out, seg.Text())
+	}
+	return out
+}
+
+func segmentsStr(input string) []string {
+	return segmentsOf([]byte(input))
+}
+
+func segmentsStrOpts(input string, o Options) []string {
+	return segmentsWithOpts([]byte(input), o)
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +61,7 @@ func TestICU4X_SentenceBreakWithLocale(t *testing.T) {
 	input := "hello; world"
 
 	// Greek: semicolon terminates sentences
-	greekSegs := segmentsStr(input, WithLocale(language.Greek))
+	greekSegs := segmentsStrOpts(input, Options{Locale: language.Greek})
 	if len(greekSegs) < 2 {
 		t.Errorf("Greek segmenter: expected at least 2 sentences for %q, got %d: %v",
 			input, len(greekSegs), greekSegs)
@@ -66,7 +79,7 @@ func TestICU4X_SentenceBreakGreekQuestionMark(t *testing.T) {
 	// U+037E (Greek question mark) should also be STerm in Greek locale
 	input := "Τι κάνεις\u037E Καλά."
 
-	greekSegs := segmentsStr(input, WithLocale(language.Greek))
+	greekSegs := segmentsStrOpts(input, Options{Locale: language.Greek})
 	if len(greekSegs) < 2 {
 		t.Errorf("Greek segmenter: expected break at Greek question mark, got %d: %v",
 			len(greekSegs), greekSegs)

@@ -550,9 +550,18 @@ func TestB2(t *testing.T) {
 	}
 }
 
-func segments(data []byte, opts ...Option) []string {
+func segments(data []byte) []string {
 	var out []string
-	seg := NewSegmenter(data, opts...)
+	seg := NewSegmenter(data)
+	for seg.Next() {
+		out = append(out, seg.Text())
+	}
+	return out
+}
+
+func segmentsOpts(data []byte, o Options) []string {
+	var out []string
+	seg := o.NewSegmenter(data)
 	for seg.Next() {
 		out = append(out, seg.Text())
 	}
@@ -606,7 +615,7 @@ func TestCSSStrictness(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := segments([]byte(tt.input), WithStrictness(tt.strictness))
+			got := segmentsOpts([]byte(tt.input), Options{Strictness: tt.strictness})
 			if !slicesEqual(got, tt.want) {
 				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
 			}
@@ -667,7 +676,7 @@ func TestCSSWordBreak(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := segments([]byte(tt.input), WithWordBreak(tt.wordBreak))
+			got := segmentsOpts([]byte(tt.input), Options{WordBreak: tt.wordBreak})
 			if !slicesEqual(got, tt.want) {
 				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
 			}
@@ -701,9 +710,7 @@ func TestCSSComposed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := segments([]byte(tt.input),
-				WithStrictness(tt.strictness),
-				WithWordBreak(tt.wordBreak))
+			got := segmentsOpts([]byte(tt.input), Options{Strictness: tt.strictness, WordBreak: tt.wordBreak})
 			if !slicesEqual(got, tt.want) {
 				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
 			}
@@ -767,7 +774,7 @@ func TestCSSAnywhere(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := segments([]byte(tt.input), WithStrictness(Anywhere))
+			got := segmentsOpts([]byte(tt.input), Options{Strictness: Anywhere})
 			if !slicesEqual(got, tt.want) {
 				t.Errorf("got  %v\nwant %v", fmtSegments(got), fmtSegments(tt.want))
 			}
@@ -787,7 +794,7 @@ func TestCSSDefaultUnchanged(t *testing.T) {
 	}
 	for _, s := range inputs {
 		data := []byte(s)
-		got := segments(data, WithStrictness(Strict), WithWordBreak(WordNormal))
+		got := segmentsOpts(data, Options{Strictness: Strict, WordBreak: WordNormal})
 		want := segments(data)
 		if !slicesEqual(got, want) {
 			t.Errorf("input %q: explicit defaults differ from no-opts\ngot  %v\nwant %v",

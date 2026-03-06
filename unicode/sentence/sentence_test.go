@@ -146,7 +146,8 @@ func TestGreekSentenceBreak(t *testing.T) {
 		defaultSentences = append(defaultSentences, seg.Text())
 	}
 
-	seg = NewSegmenter(input, WithLocale(language.Greek))
+	opts := Options{Locale: language.Greek}
+	seg = opts.NewSegmenter(input)
 	var greekSentences []string
 	for seg.Next() {
 		greekSentences = append(greekSentences, seg.Text())

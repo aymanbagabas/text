@@ -144,7 +144,8 @@ func TestFinnishWordBreak(t *testing.T) {
 		defaultWords = append(defaultWords, seg.Text())
 	}
 
-	seg = NewSegmenter(input, WithLocale(language.Finnish))
+	finnishOpts := Options{Locale: language.Finnish}
+	seg = finnishOpts.NewSegmenter(input)
 	var finnishWords []string
 	for seg.Next() {
 		finnishWords = append(finnishWords, seg.Text())
@@ -181,7 +182,8 @@ func TestFinnishWordBreak(t *testing.T) {
 func TestSwedishWordBreak(t *testing.T) {
 	input := []byte("kl:n")
 
-	seg := NewSegmenter(input, WithLocale(language.Swedish))
+	swedishOpts := Options{Locale: language.Swedish}
+	seg := swedishOpts.NewSegmenter(input)
 	var words []string
 	for seg.Next() {
 		words = append(words, seg.Text())

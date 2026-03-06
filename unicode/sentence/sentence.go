@@ -21,17 +21,19 @@ type Segmenter struct {
 	s *segmenter.Segmenter
 }
 
-type options struct {
-	locale language.Tag
-}
-
-// Option configures a [Segmenter].
-type Option func(*options)
-
-// WithLocale sets the locale for locale-tailored segmentation.
-// Supported locales: Greek (el).
-func WithLocale(t language.Tag) Option {
-	return func(o *options) { o.locale = t }
+// Options configures sentence segmentation.
+// The zero value uses default UAX #29 rules with no locale tailoring.
+type Options struct {
+	// Locale provides locale-tailored sentence breaking.
+	// When set, the segmenter applies locale-specific rules that
+	// override the default UAX #29 properties for certain characters.
+	//
+	// Supported locales:
+	//   - Greek (el): treats semicolon (U+003B) and Greek question
+	//     mark (U+037E) as sentence terminators (STerm).
+	//
+	// The zero value applies no locale tailoring.
+	Locale language.Tag
 }
 
 // greekOverride remaps U+003B (semicolon) and U+037E (Greek question mark)
@@ -46,15 +48,17 @@ func greekOverride(prop uint8, r rune) uint8 {
 }
 
 // NewSegmenter returns a Segmenter that iterates over the sentences
-// in the given input.
-func NewSegmenter(input []byte, opts ...Option) *Segmenter {
-	var o options
-	for _, fn := range opts {
-		fn(&o)
-	}
+// in the given input using default options.
+func NewSegmenter(input []byte) *Segmenter {
+	return &Segmenter{s: segmenter.New(&ruleData, input)}
+}
+
+// NewSegmenter returns a Segmenter that iterates over the sentences
+// in the given input, configured by o.
+func (o *Options) NewSegmenter(input []byte) *Segmenter {
 	seg := segmenter.New(&ruleData, input)
-	if o.locale != (language.Tag{}) {
-		base, _ := o.locale.Base()
+	if o.Locale != language.Und {
+		base, _ := o.Locale.Base()
 		switch base {
 		case language.MustParseBase("el"):
 			seg.SetOverrideLookup(greekOverride)

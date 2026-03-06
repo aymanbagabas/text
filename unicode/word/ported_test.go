@@ -15,17 +15,30 @@ import (
 	"golang.org/x/text/language"
 )
 
-func segmentsOf(input []byte, opts ...Option) []string {
+func segmentsOf(input []byte) []string {
 	var out []string
-	seg := NewSegmenter(input, opts...)
+	seg := NewSegmenter(input)
 	for seg.Next() {
 		out = append(out, seg.Text())
 	}
 	return out
 }
 
-func segmentsStr(input string, opts ...Option) []string {
-	return segmentsOf([]byte(input), opts...)
+func segmentsWithOpts(input []byte, o Options) []string {
+	var out []string
+	seg := o.NewSegmenter(input)
+	for seg.Next() {
+		out = append(out, seg.Text())
+	}
+	return out
+}
+
+func segmentsStr(input string) []string {
+	return segmentsOf([]byte(input))
+}
+
+func segmentsStrOpts(input string, o Options) []string {
+	return segmentsWithOpts([]byte(input), o)
 }
 
 func strSlicesEqual(a, b []string) bool {
@@ -158,7 +171,7 @@ func TestICU4X_WordBreakWithLocale(t *testing.T) {
 	input := "hello:world"
 
 	// Swedish: colon is not MidLetter, so "hello:world" stays as one word
-	svSegs := segmentsStr(input, WithLocale(language.Swedish))
+	svSegs := segmentsStrOpts(input, Options{Locale: language.Swedish})
 	// In icu4x, Swedish breaks at colon boundaries differently.
 	// With our Finnish/Swedish override, colon becomes Other, so it should split.
 	found := false

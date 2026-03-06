@@ -7,8 +7,7 @@
 // A [Segmenter] iterates over the line break opportunities in a byte slice,
 // returning segments between mandatory or allowed break positions.
 //
-// CSS line-break and word-break properties are supported via [WithStrictness]
-// and [WithWordBreak] options.
+// CSS line-break and word-break properties are supported via [Options].
 package line
 
 import (
@@ -80,47 +79,53 @@ type Segmenter struct {
 	anywhere bool
 }
 
-type options struct {
-	locale     language.Tag
-	strictness Strictness
-	wordBreak  WordBreak
-}
+// Options configures line break segmentation.
+// The zero value uses [Strict] strictness with [WordNormal] word breaking
+// and no locale tailoring.
+type Options struct {
+	// Strictness sets the CSS line-break strictness level, controlling
+	// how aggressively the segmenter breaks lines at CJ (conditional
+	// Japanese starter) characters and other context-dependent positions.
+	// The default is [Strict].
+	//
+	// See https://drafts.csswg.org/css-text-3/#line-break-property.
+	Strictness Strictness
 
-// Option configures a [Segmenter].
-type Option func(*options)
+	// WordBreak sets the CSS word-break behavior, controlling line
+	// break opportunities between letters. [WordBreakAll] allows
+	// breaks within words; [WordKeepAll] suppresses breaks between
+	// CJK characters that would normally be allowed.
+	// The default is [WordNormal].
+	//
+	// See https://drafts.csswg.org/css-text-3/#word-break-property.
+	WordBreak WordBreak
 
-// WithLocale sets the locale for locale-tailored segmentation.
-func WithLocale(t language.Tag) Option {
-	return func(o *options) { o.locale = t }
-}
-
-// WithStrictness sets the CSS line-break strictness level.
-// The default is [Strict].
-func WithStrictness(s Strictness) Option {
-	return func(o *options) { o.strictness = s }
-}
-
-// WithWordBreak sets the CSS word-break behavior.
-// The default is [WordNormal].
-func WithWordBreak(wb WordBreak) Option {
-	return func(o *options) { o.wordBreak = wb }
+	// Locale provides locale-tailored line breaking.
+	// When set, the segmenter may allow additional break opportunities
+	// under [Normal] or [Loose] strictness based on the content language.
+	//
+	// See https://drafts.csswg.org/css-text-3/#line-break-property for details.
+	//
+	// The zero value applies no locale tailoring.
+	Locale language.Tag
 }
 
 // NewSegmenter returns a Segmenter that iterates over the line break
-// segments in the given input.
-func NewSegmenter(input []byte, opts ...Option) *Segmenter {
-	var o options
-	for _, fn := range opts {
-		fn(&o)
-	}
+// segments in the given input using default options.
+func NewSegmenter(input []byte) *Segmenter {
+	return &Segmenter{s: segmenter.New(&ruleData, input)}
+}
 
+// NewSegmenter returns a Segmenter that iterates over the line break
+// segments in the given input, configured by o.
+func (o *Options) NewSegmenter(input []byte) *Segmenter {
 	seg := segmenter.New(&ruleData, input)
 
-	if override := buildOverride(o.strictness, o.wordBreak); override != nil {
+	if override := buildOverride(o.Strictness, o.WordBreak); override != nil {
 		seg.SetOverrideLookup(override)
 	}
 
-	l := &Segmenter{s: seg, anywhere: o.strictness == Anywhere}
+	l := &Segmenter{s: seg, anywhere: o.Strictness == Anywhere}
 	if l.anywhere {
 		l.gs = grapheme.NewSegmenter(input)
 	}

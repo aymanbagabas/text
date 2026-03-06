@@ -13,17 +13,30 @@ import (
 	"testing"
 )
 
-func portedSegments(data []byte, opts ...Option) []string {
+func portedSegments(data []byte) []string {
 	var out []string
-	seg := NewSegmenter(data, opts...)
+	seg := NewSegmenter(data)
 	for seg.Next() {
 		out = append(out, seg.Text())
 	}
 	return out
 }
 
-func portedSegmentsStr(input string, opts ...Option) []string {
-	return portedSegments([]byte(input), opts...)
+func portedSegmentsOpts(data []byte, o Options) []string {
+	var out []string
+	seg := o.NewSegmenter(data)
+	for seg.Next() {
+		out = append(out, seg.Text())
+	}
+	return out
+}
+
+func portedSegmentsStr(input string) []string {
+	return portedSegments([]byte(input))
+}
+
+func portedSegmentsStrOpts(input string, o Options) []string {
+	return portedSegmentsOpts([]byte(input), o)
 }
 
 func portedSlicesEqual(a, b []string) bool {
@@ -190,7 +203,7 @@ func TestICU4X_CSSStrictLineBreak(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithStrictness(Strict))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: Strict})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -218,7 +231,7 @@ func TestICU4X_CSSNormalLineBreak(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithStrictness(Normal))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: Normal})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -256,7 +269,7 @@ func TestICU4X_CSSLooseLineBreak(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithStrictness(Loose))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: Loose})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -294,7 +307,7 @@ func TestICU4X_CSSAnywhereLineBreak(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithStrictness(Anywhere))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: Anywhere})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -319,7 +332,7 @@ func TestICU4X_CSSWordBreakBreakAll(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithWordBreak(WordBreakAll))
+			got := portedSegmentsStrOpts(tt.input, Options{WordBreak: WordBreakAll})
 			// Verify roundtrip
 			var total string
 			for _, s := range got {
@@ -348,7 +361,7 @@ func TestICU4X_CSSWordBreakKeepAll(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithWordBreak(WordKeepAll))
+			got := portedSegmentsStrOpts(tt.input, Options{WordBreak: WordKeepAll})
 			// Verify roundtrip
 			var total string
 			for _, s := range got {
@@ -367,7 +380,7 @@ func TestICU4X_CSSWordBreakKeepAll(t *testing.T) {
 
 func TestICU4X_CSSWordBreakKeepAllSpace(t *testing.T) {
 	// icu4x: 字\u3000字 with keep-all → breaks at ideographic space
-	got := portedSegmentsStr("字\u3000字", WithWordBreak(WordKeepAll))
+	got := portedSegmentsStrOpts("字\u3000字", Options{WordBreak: WordKeepAll})
 	if len(got) < 2 {
 		t.Logf("keep-all with ideographic space: got %d segments: %q", len(got), got)
 	}
@@ -498,9 +511,7 @@ func TestICU4X_CSSComposed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input,
-				WithStrictness(tt.strictness),
-				WithWordBreak(tt.wordBreak))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: tt.strictness, WordBreak: tt.wordBreak})
 			var total string
 			for _, s := range got {
 				total += s
@@ -586,7 +597,7 @@ func TestICU4X_CSSLooseExtended(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithStrictness(Loose))
+			got := portedSegmentsStrOpts(tt.input, Options{Strictness: Loose})
 			var total string
 			for _, s := range got {
 				total += s
@@ -626,7 +637,7 @@ func TestICU4X_CSSBreakAllDetailed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithWordBreak(WordBreakAll))
+			got := portedSegmentsStrOpts(tt.input, Options{WordBreak: WordBreakAll})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -659,7 +670,7 @@ func TestICU4X_CSSKeepAllDetailed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := portedSegmentsStr(tt.input, WithWordBreak(WordKeepAll))
+			got := portedSegmentsStrOpts(tt.input, Options{WordBreak: WordKeepAll})
 			if !portedSlicesEqual(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
