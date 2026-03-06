@@ -42,7 +42,7 @@ type Options struct {
 func greekOverride(prop uint8, r rune) uint8 {
 	switch r {
 	case ';', '\u037E':
-		return STerm
+		return uint8(STerm)
 	}
 	return prop
 }

@@ -17,7 +17,7 @@ import (
 	"golang.org/x/text/internal/ucd"
 )
 
-var gcbMap = map[string]uint8{
+var gcbMap = map[string]Class{
 	"Other":              Other,
 	"CR":                 CR,
 	"LF":                 LF,
@@ -46,7 +46,7 @@ func main() {
 func genTables() {
 	gen.Repackage("gen_trieval.go", "trieval.go", "grapheme")
 
-	props := make([]uint8, unicode.MaxRune+1)
+	props := make([]Class, unicode.MaxRune+1)
 
 	ucd.Parse(gen.OpenUCDFile("auxiliary/GraphemeBreakProperty.txt"), func(p *ucd.Parser) {
 		r := p.Rune(0)
@@ -55,12 +55,12 @@ func genTables() {
 		if !ok {
 			log.Fatalf("U+%04X: unknown Grapheme_Cluster_Break value %q", r, val)
 		}
-		props[r] = uint8(cls)
+		props[r] = cls
 	})
 
 	ucd.Parse(gen.OpenUCDFile("emoji/emoji-data.txt"), func(p *ucd.Parser) {
 		if p.String(1) == "Extended_Pictographic" {
-			props[p.Rune(0)] = uint8(Extended_Pictographic)
+			props[p.Rune(0)] = Extended_Pictographic
 		}
 	})
 
@@ -71,12 +71,12 @@ func genTables() {
 		r := p.Rune(0)
 		switch p.String(2) {
 		case "Linker":
-			props[r] = uint8(InCBLinker)
+			props[r] = InCBLinker
 		case "Consonant":
-			props[r] = uint8(InCBConsonant)
+			props[r] = InCBConsonant
 		case "Extend":
 			if r != 0x200D {
-				props[r] = uint8(InCBExtend)
+				props[r] = InCBExtend
 			}
 		}
 	})
@@ -119,62 +119,62 @@ func buildRules() []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(eot), Break: true})
 
 	// GB3: CR × LF
-	rules = append(rules, segmenter.SimpleRule{Left: p(CR), Right: p(LF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(CR)), Right: p(uint8(LF)), Break: false})
 
 	// GB4: (Control|CR|LF) ÷
-	rules = append(rules, segmenter.SimpleRule{Left: p(Control, CR, LF), Right: nil, Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(Control), uint8(CR), uint8(LF)), Right: nil, Break: true})
 	// GB5: ÷ (Control|CR|LF)
-	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(Control, CR, LF), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(uint8(Control), uint8(CR), uint8(LF)), Break: true})
 
 	// GB6: L × (L|V|LV|LVT)
-	rules = append(rules, segmenter.SimpleRule{Left: p(L), Right: p(L, V, LV, LVT), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(L)), Right: p(uint8(L), uint8(V), uint8(LV), uint8(LVT)), Break: false})
 	// GB7: (LV|V) × (V|T)
-	rules = append(rules, segmenter.SimpleRule{Left: p(LV, V), Right: p(V, T), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(LV), uint8(V)), Right: p(uint8(V), uint8(T)), Break: false})
 	// GB8: (LVT|T) × T
-	rules = append(rules, segmenter.SimpleRule{Left: p(LVT, T), Right: p(T), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(LVT), uint8(T)), Right: p(uint8(T)), Break: false})
 
 	// GB9: × (Extend|ZWJ|InCBExtend|InCBLinker)
-	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(Extend, ZWJ, InCBExtend, InCBLinker), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(uint8(Extend), uint8(ZWJ), uint8(InCBExtend), uint8(InCBLinker)), Break: false})
 	// GB9a: × SpacingMark
-	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(SpacingMark), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(uint8(SpacingMark)), Break: false})
 	// GB9b: Prepend ×
-	rules = append(rules, segmenter.SimpleRule{Left: p(Prepend), Right: nil, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(Prepend)), Right: nil, Break: false})
 
 	// GB9c: Consonant [{Extend|InCBExtend} {Linker} {Extend|InCBExtend}]+ Consonant
-	rules = append(rules, segmenter.SimpleRule{Left: p(InCB_Linker), Right: p(InCBConsonant), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(InCB_Linker), Right: p(uint8(InCBConsonant)), Break: false})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(InCBConsonant),
+		Entry: p(uint8(InCBConsonant)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(InCBLinker), State: uint8(InCB_Linker)},
+			{Props: p(uint8(InCBLinker)), State: uint8(InCB_Linker)},
 		},
-		SelfLoop: p(InCBExtend, InCBLinker),
+		SelfLoop: p(uint8(InCBExtend), uint8(InCBLinker)),
 		Interm:   false,
 	})
 
 	// GB11: ExtPict Extend* ZWJ × ExtPict
-	rules = append(rules, segmenter.SimpleRule{Left: p(ExtPict_ZWJ), Right: p(Extended_Pictographic), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(ExtPict_ZWJ), Right: p(uint8(Extended_Pictographic)), Break: false})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(Extended_Pictographic),
+		Entry: p(uint8(Extended_Pictographic)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(Extend, InCBExtend), State: uint8(ExtPict_Ext)},
-			{Props: p(ZWJ), State: uint8(ExtPict_ZWJ)},
+			{Props: p(uint8(Extend), uint8(InCBExtend)), State: uint8(ExtPict_Ext)},
+			{Props: p(uint8(ZWJ)), State: uint8(ExtPict_ZWJ)},
 		},
-		SelfLoop: p(Extend, InCBExtend),
+		SelfLoop: p(uint8(Extend), uint8(InCBExtend)),
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(Extended_Pictographic),
+		Entry: p(uint8(Extended_Pictographic)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(ZWJ), State: uint8(ExtPict_ZWJ)},
+			{Props: p(uint8(ZWJ)), State: uint8(ExtPict_ZWJ)},
 		},
 	})
 
 	// GB12/13: RI × RI (pair, then break on next RI)
-	rules = append(rules, segmenter.SimpleRule{Left: p(Regional_Indicator), Right: p(Regional_Indicator), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: p(Regional_Indicator), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(Regional_Indicator)), Right: p(uint8(Regional_Indicator)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: p(uint8(Regional_Indicator)), Break: true})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(Regional_Indicator),
+		Entry: p(uint8(Regional_Indicator)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(Regional_Indicator), State: uint8(RI_RI)},
+			{Props: p(uint8(Regional_Indicator)), State: uint8(RI_RI)},
 		},
 	})
 

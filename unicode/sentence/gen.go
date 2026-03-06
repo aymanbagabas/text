@@ -17,7 +17,7 @@ import (
 	"golang.org/x/text/internal/ucd"
 )
 
-var sbMap = map[string]uint8{
+var sbMap = map[string]Class{
 	"Other":     Other,
 	"CR":        CR,
 	"LF":        LF,
@@ -47,7 +47,7 @@ func main() {
 func genTables() {
 	gen.Repackage("gen_trieval.go", "trieval.go", "sentence")
 
-	props := make([]uint8, unicode.MaxRune+1)
+	props := make([]Class, unicode.MaxRune+1)
 
 	ucd.Parse(gen.OpenUCDFile("auxiliary/SentenceBreakProperty.txt"), func(parser *ucd.Parser) {
 		r := parser.Rune(0)
@@ -56,7 +56,7 @@ func genTables() {
 		if !ok {
 			log.Fatalf("U+%04X: unknown Sentence_Break value %q", r, val)
 		}
-		props[r] = uint8(cls)
+		props[r] = cls
 	})
 
 	w := gen.NewCodeWriter()
@@ -83,7 +83,7 @@ func genTables() {
 }
 
 func buildRules() []segmenter.Rule {
-	sb5Ignored := p(Extend, Format)
+	sb5Ignored := p(uint8(Extend), uint8(Format))
 
 	idx := segmenter.IndexState
 	interm := segmenter.IntermediateState
@@ -102,13 +102,13 @@ func buildRules() []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: nil, Right: p(eot), Break: true})
 
 	// SB3: CR × LF
-	rules = append(rules, segmenter.SimpleRule{Left: p(CR), Right: p(LF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(CR)), Right: p(uint8(LF)), Break: false})
 
 	// SB4: ParaSep ÷
-	rules = append(rules, segmenter.SimpleRule{Left: p(Sep, CR, LF), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(uint8(Sep), uint8(CR), uint8(LF)), Break: true})
 
 	// SB5: X (Extend | Format)* → X
-	for _, base := range p(Lower, Upper, OLetter, ATerm, STerm) {
+	for _, base := range p(uint8(Lower), uint8(Upper), uint8(OLetter), uint8(ATerm), uint8(STerm)) {
 		rules = append(rules, segmenter.IgnoreRule{
 			Props:   []uint8{base},
 			Ignored: sb5Ignored,
@@ -135,15 +135,15 @@ func buildRules() []segmenter.Rule {
 	// their Close/Sp/ParaSep chain states implement SB6–SB11 together.
 
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(Upper),
+		Entry: p(uint8(Upper)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(ATerm), State: uint8(UpperATerm)},
+			{Props: p(uint8(ATerm)), State: uint8(UpperATerm)},
 		},
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: p(Lower),
+		Entry: p(uint8(Lower)),
 		Steps: []segmenter.ChainStep{
-			{Props: p(ATerm), State: uint8(LowerATerm)},
+			{Props: p(uint8(ATerm)), State: uint8(LowerATerm)},
 		},
 	})
 
@@ -164,7 +164,7 @@ func buildRules() []segmenter.Rule {
 		uint8(Lower):     segmenter.Keep,                   // SB8
 	}
 	rules = append(rules, segmenter.OverrideRule{
-		States:    p(ATerm),
+		States:    p(uint8(ATerm)),
 		Overrides: atermOverrides,
 		WipeValue: segmenter.Break,
 	})
@@ -273,7 +273,7 @@ func buildRules() []segmenter.Rule {
 
 	// STerm row: SB8a + SB9 + SB11
 	rules = append(rules, segmenter.OverrideRule{
-		States: p(STerm),
+		States: p(uint8(STerm)),
 		Overrides: map[uint8]uint8{
 			uint8(Close):     interm(uint8(STermClose)),       // SB9
 			uint8(Sp):        interm(uint8(STermCloseSp)),     // SB9

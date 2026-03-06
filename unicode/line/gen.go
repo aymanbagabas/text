@@ -21,7 +21,7 @@ import (
 // lbMap maps Line_Break UCD property value strings to property indices.
 // AI and CJ are stored as distinct properties so CSS line-break modes can
 // remap them at runtime.
-var lbMap = map[string]uint8{
+var lbMap = map[string]Class{
 	"XX":  XX,
 	"BK":  BK,
 	"CR":  CR,
@@ -76,52 +76,52 @@ var lbMap = map[string]uint8{
 // lb9XX maps each non-excluded base property to its _XX absorption state.
 // Used only during generation by expandAll() and the LB9 absorption loop.
 var lb9XX = map[uint8]uint8{
-	XX:               XX_XX,
-	AI:               AI_XX,
-	AK:               AK_XX,
-	AL:               AL_XX,
-	AL_DC: AL_DC_XX,
-	AP:               AP_XX,
-	AS:               AS_XX,
-	B2:               B2_XX,
-	BA:               BA_XX,
-	BB:               BB_XX,
-	CB:               CB_XX,
-	CJ:               CJ_XX,
-	CL:               CL_XX,
-	CP:               CP_XX,
-	EB:               EB_XX,
-	EM:               EM_XX,
-	EX:               EX_XX,
-	GL:               GL_XX,
-	H2:               H2_XX,
-	H3:               H3_XX,
-	HL:               HL_XX,
-	HY:               HY_XX,
-	ID:               ID_XX,
-	ID_ExtPict:            ID_ExtPict_XX,
-	IN:               IN_XX,
-	IS:               IS_XX,
-	JL:               JL_XX,
-	JT:               JT_XX,
-	JV:               JV_XX,
-	NS:               NS_XX,
-	NU:               NU_XX,
-	OP_EA:            OP_EA_XX,
-	OP:          OP_XX,
-	PO:               PO_XX,
-	PO_EA:           PO_EA_XX,
-	PR:               PR_XX,
-	PR_EA:           PR_EA_XX,
-	QU:               QU_XX,
-	QU_PF:            QU_PF_XX,
-	QU_PI:            QU_PI_XX,
-	RI:               RI_XX,
-	SA:               SA_XX,
-	SY:               SY_XX,
-	VF:               VF_XX,
-	VI:               VI_XX,
-	WJ:               WJ_XX,
+	uint8(XX):         XX_XX,
+	uint8(AI):         AI_XX,
+	uint8(AK):         AK_XX,
+	uint8(AL):         AL_XX,
+	uint8(AL_DC):      AL_DC_XX,
+	uint8(AP):         AP_XX,
+	uint8(AS):         AS_XX,
+	uint8(B2):         B2_XX,
+	uint8(BA):         BA_XX,
+	uint8(BB):         BB_XX,
+	uint8(CB):         CB_XX,
+	uint8(CJ):         CJ_XX,
+	uint8(CL):         CL_XX,
+	uint8(CP):         CP_XX,
+	uint8(EB):         EB_XX,
+	uint8(EM):         EM_XX,
+	uint8(EX):         EX_XX,
+	uint8(GL):         GL_XX,
+	uint8(H2):         H2_XX,
+	uint8(H3):         H3_XX,
+	uint8(HL):         HL_XX,
+	uint8(HY):         HY_XX,
+	uint8(ID):         ID_XX,
+	uint8(ID_ExtPict): ID_ExtPict_XX,
+	uint8(IN):         IN_XX,
+	uint8(IS):         IS_XX,
+	uint8(JL):         JL_XX,
+	uint8(JT):         JT_XX,
+	uint8(JV):         JV_XX,
+	uint8(NS):         NS_XX,
+	uint8(NU):         NU_XX,
+	uint8(OP_EA):      OP_EA_XX,
+	uint8(OP):         OP_XX,
+	uint8(PO):         PO_XX,
+	uint8(PO_EA):      PO_EA_XX,
+	uint8(PR):         PR_XX,
+	uint8(PR_EA):      PR_EA_XX,
+	uint8(QU):         QU_XX,
+	uint8(QU_PF):      QU_PF_XX,
+	uint8(QU_PI):      QU_PI_XX,
+	uint8(RI):         RI_XX,
+	uint8(SA):         SA_XX,
+	uint8(SY):         SY_XX,
+	uint8(VF):         VF_XX,
+	uint8(VI):         VI_XX,
+	uint8(WJ):         WJ_XX,
 }
 
 func main() {
@@ -153,7 +153,7 @@ func genTables() {
 	// Parse UCD files and build the property trie.
 	// =====================================================================
 
-	props := make([]uint8, unicode.MaxRune+1)
+	props := make([]Class, unicode.MaxRune+1)
 
 	ucd.Parse(gen.OpenUCDFile("LineBreak.txt"), func(parser *ucd.Parser) {
 		r := parser.Rune(0)
@@ -261,7 +261,7 @@ func genTables() {
 
 	rules := buildRules(gen.UnicodeVersion())
 	bt := segmenter.Build(rules, stride, sot, eot, lastCP)
-	segmenter.WriteBreakTable(w, "ruleData", bt, "lineTrie", SA)
+	segmenter.WriteBreakTable(w, "ruleData", bt, "lineTrie", uint8(SA))
 }
 
 func p(v ...uint8) []uint8 { return v }
@@ -285,18 +285,18 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	idx := segmenter.IndexState
 	interm := segmenter.IntermediateState
 
-	allAlpha := expand(AI, AL, HL, XX, SA, CM, ZWJ)
-	allAlphaTarget := expand(AI, AL, AL_DC, HL, XX, SA, CM, ZWJ)
-	prAll := expand(PR, PR_EA)
-	poAll := expand(PO, PO_EA)
-	opAll := expand(OP, OP_EA)
+	allAlpha := expand(uint8(AI), uint8(AL), uint8(HL), uint8(XX), uint8(SA), uint8(CM), uint8(ZWJ))
+	allAlphaTarget := expand(uint8(AI), uint8(AL), uint8(AL_DC), uint8(HL), uint8(XX), uint8(SA), uint8(CM), uint8(ZWJ))
+	prAll := expand(uint8(PR), uint8(PR_EA))
+	poAll := expand(uint8(PO), uint8(PO_EA))
+	opAll := expand(uint8(OP), uint8(OP_EA))
 
 	prpo := append(prAll, poAll...)
-	mandatory := p(BK, CR, LF, NL)
-	clcpexissy := expand(CL, CP, EX, IS, SY)
-	quAll := expand(QU, QU_PF, QU_PI)
-	bahyns := expand(BA, HY, NS, CJ)
-	hangul := expand(JL, JV, JT, H2, H3)
+	mandatory := p(uint8(BK), uint8(CR), uint8(LF), uint8(NL))
+	clcpexissy := expand(uint8(CL), uint8(CP), uint8(EX), uint8(IS), uint8(SY))
+	quAll := expand(uint8(QU), uint8(QU_PF), uint8(QU_PI))
+	bahyns := expand(uint8(BA), uint8(HY), uint8(NS), uint8(CJ))
+	hangul := expand(uint8(JL), uint8(JV), uint8(JT), uint8(H2), uint8(H3))
 
 	var rules []segmenter.Rule
 
@@ -315,11 +315,11 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Right: p(eot), Break: true})
 
 	// LB4: BK !
-	rules = append(rules, segmenter.SimpleRule{Left: expand(BK), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(BK)), Break: true})
 
 	// LB5: CR × LF, CR !, LF !, NL !
-	rules = append(rules, segmenter.SimpleRule{Left: expand(CR), Right: p(LF), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(CR, LF, NL), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(CR)), Right: p(uint8(LF)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(CR), uint8(LF), uint8(NL)), Break: true})
 
 	// LB6: × (BK | CR | LF | NL)
 	rules = append(rules, segmenter.SimpleRule{Right: mandatory, Break: false})
@@ -328,29 +328,29 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	})
 
 	// LB7: × SP, × ZW
-	rules = append(rules, segmenter.SimpleRule{Right: p(SP, ZW), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, RI_RI, AK_VI), Right: p(SP), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Right: p(uint8(SP), uint8(ZW)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, RI_RI, AK_VI), Right: p(uint8(SP)), Break: false})
 	rules = append(rules, segmenter.SimpleRule{
-		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: p(ZW), Break: false,
+		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: p(uint8(ZW)), Break: false,
 	})
 
 	// LB8: ZW SP* ÷
-	rules = append(rules, segmenter.SimpleRule{Left: expand(ZW), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(ZW)), Break: true})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(ZW),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: ZW}},
+		Entry: expand(uint8(ZW)),
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: uint8(ZW)}},
 	})
 
 	// LB8a: ZWJ ×
-	rules = append(rules, segmenter.SimpleRule{Left: expand(ZWJ), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(ZWJ)), Break: false})
 
 	// LB9: X (CM | ZWJ)* → X
 	for base, xx := range lb9XX {
 		rules = append(rules, segmenter.IgnoreRule{
 			Props:   p(base, xx),
-			Ignored: p(CM, ZWJ),
+			Ignored: p(uint8(CM), uint8(ZWJ)),
 			Target: func(_, ign uint8) uint8 {
-				if ign == ZWJ {
+				if ign == uint8(ZWJ) {
 					return ZWJ_absorb
 				}
 				return xx
@@ -361,9 +361,9 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 		States:    p(ZWJ_absorb),
 		WipeValue: segmenter.Keep,
 		Overrides: map[uint8]uint8{
-			eot: segmenter.Break,
-			CM:  idx(ZWJ_absorb),
-			ZWJ: idx(ZWJ_absorb),
+			eot:        segmenter.Break,
+			uint8(CM):  idx(ZWJ_absorb),
+			uint8(ZWJ): idx(ZWJ_absorb),
 		},
 	})
 
@@ -371,21 +371,21 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	// (Handled by including CM/ZWJ in allAlpha groups.)
 
 	// LB11: × WJ, WJ ×
-	rules = append(rules, segmenter.SimpleRule{Right: expand(WJ), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(uint8(WJ)), Break: false})
 	rules = append(rules, segmenter.SimpleRule{
-		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: expand(WJ), Break: false,
+		Left: p(B2_SP, CL_CP_SP, HL_HY, OP_SP, QU_SP, RI_RI, AK_VI), Right: expand(uint8(WJ)), Break: false,
 	})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(WJ), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(WJ)), Break: false})
 
 	// LB12: GL ×
-	rules = append(rules, segmenter.SimpleRule{Left: expand(GL), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(GL)), Break: false})
 
 	// LB12a: [^SP BA HY] × GL
 	rules = append(rules, segmenter.SimpleRule{
-		Left: append(expand(SP, BA, HY), B2_SP, CL_CP_SP), Right: expand(GL), Break: true,
+		Left: append(expand(uint8(SP), uint8(BA), uint8(HY)), B2_SP, CL_CP_SP), Right: expand(uint8(GL)), Break: true,
 	})
-	rules = append(rules, segmenter.SimpleRule{Right: expand(GL), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, OP_SP, RI_RI, AK_VI), Right: expand(GL), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(uint8(GL)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY, OP_SP, RI_RI, AK_VI), Right: expand(uint8(GL)), Break: false})
 
 	// LB13: × CL, × CP, × EX, × IS, × SY
 	rules = append(rules, segmenter.SimpleRule{Right: clcpexissy, Break: false})
@@ -395,32 +395,32 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: append(opAll, OP_SP), Break: false})
 	rules = append(rules, segmenter.ChainRule{
 		Entry: opAll,
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: OP_SP}},
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: OP_SP}},
 	})
 	rules = append(rules, segmenter.ChainRule{
 		Entry: p(OP_SP),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: OP_SP}},
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: OP_SP}},
 	})
 
 	// LB15a: (sot | BK | CR | LF | NL | OP | QU | GL | SP | ZW) QU_PI SP* ×
 	rules = append(rules, segmenter.ChainRule{
-		Entry:  expand(QU_PI),
-		Steps:  []segmenter.ChainStep{{Props: p(SP), State: QU_SP}},
+		Entry:  expand(uint8(QU_PI)),
+		Steps:  []segmenter.ChainStep{{Props: p(uint8(SP)), State: QU_SP}},
 		Interm: true,
 	})
 	if !hasLB15b {
 		rules = append(rules, segmenter.ChainRule{
-			Entry:  expand(QU, QU_PF),
-			Steps:  []segmenter.ChainStep{{Props: p(SP), State: QU_SP}},
+			Entry:  expand(uint8(QU), uint8(QU_PF)),
+			Steps:  []segmenter.ChainStep{{Props: p(uint8(SP)), State: QU_SP}},
 			Interm: true,
 		})
 	}
 	var quPILeft []uint8
-	for bp := uint8(0); bp <= lastBaseProperty; bp++ {
-		if bp == BK || bp == CR || bp == LF || bp == NL || bp == SP || bp == ZW {
+	for bp := uint8(0); bp <= uint8(lastBaseProperty); bp++ {
+		if bp == uint8(BK) || bp == uint8(CR) || bp == uint8(LF) || bp == uint8(NL) || bp == uint8(SP) || bp == uint8(ZW) {
 			continue
 		}
-		if bp == QU || bp == QU_PI || bp == QU_PF {
+		if bp == uint8(QU) || bp == uint8(QU_PI) || bp == uint8(QU_PF) {
 			continue
 		}
 		quPILeft = append(quPILeft, expand(bp)...)
@@ -428,15 +428,15 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	quPILeft = append(quPILeft, HL_HY, AK_VI, AK_DC, RI_RI)
 	rules = append(rules, segmenter.ChainRule{
 		Entry: quPILeft,
-		Steps: []segmenter.ChainStep{{Props: p(QU_PI), State: QU}},
+		Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PI)), State: uint8(QU)}},
 	})
 	rules = append(rules, segmenter.OverrideRule{
 		States:    p(QU_SP),
 		WipeValue: segmenter.NoMatch,
 		Overrides: func() map[uint8]uint8 {
 			m := map[uint8]uint8{
-				eot: segmenter.Break,
-				SP:  interm(QU_SP),
+				eot:        segmenter.Break,
+				uint8(SP):  interm(QU_SP),
 			}
 			for _, op := range opAll {
 				m[op] = segmenter.Keep
@@ -444,11 +444,11 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 			for _, mb := range mandatory {
 				m[mb] = segmenter.Keep
 			}
-			m[ZW] = segmenter.Keep
+			m[uint8(ZW)] = segmenter.Keep
 			for _, c := range clcpexissy {
 				m[c] = segmenter.Keep
 			}
-			for _, w := range expand(WJ) {
+			for _, w := range expand(uint8(WJ)) {
 				m[w] = segmenter.Keep
 			}
 			return m
@@ -457,56 +457,56 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 
 	// LB15b: × QU_PF (SP | GL | WJ | CL | QU | CP | EX | IS | SY | BK | CR | LF | NL | ZW | eot)
 	rules = append(rules, segmenter.SimpleRule{
-		Left:  append(expand(QU_PF), SP_QU, CB_QU),
-		Right: append(p(SP, GL, WJ, CL, CP, EX, IS, SY, BK, CR, LF, NL, ZW), expand(QU, QU_PI, QU_PF)...),
+		Left:  append(expand(uint8(QU_PF)), SP_QU, CB_QU),
+		Right: append(p(uint8(SP), uint8(GL), uint8(WJ), uint8(CL), uint8(CP), uint8(EX), uint8(IS), uint8(SY), uint8(BK), uint8(CR), uint8(LF), uint8(NL), uint8(ZW)), expand(uint8(QU), uint8(QU_PI), uint8(QU_PF))...),
 		Break: false,
 	})
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(QU_PF), SP_QU, CB_QU), Right: p(eot), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(uint8(QU_PF)), SP_QU, CB_QU), Right: p(eot), Break: true})
 	if hasLB15b {
 		rules = append(rules, segmenter.ChainRule{
-			Entry: expand(SP),
-			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}},
+			Entry: expand(uint8(SP)),
+			Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PF)), State: SP_QU}},
 		})
 		rules = append(rules, segmenter.ChainRule{
-			Entry: p(B2_SP), Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}}, Interm: true,
+			Entry: p(B2_SP), Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PF)), State: SP_QU}}, Interm: true,
 		})
 		rules = append(rules, segmenter.ChainRule{
-			Entry: p(CL_CP_SP), Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: SP_QU}}, Interm: true,
+			Entry: p(CL_CP_SP), Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PF)), State: SP_QU}}, Interm: true,
 		})
 		rules = append(rules, segmenter.ChainRule{
-			Entry: expand(CB),
-			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: CB_QU}},
+			Entry: expand(uint8(CB)),
+			Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PF)), State: CB_QU}},
 		})
 		rules = append(rules, segmenter.ChainRule{
 			Entry: p(OP_SP),
-			Steps: []segmenter.ChainStep{{Props: p(QU_PF), State: QU_PF}},
+			Steps: []segmenter.ChainStep{{Props: p(uint8(QU_PF)), State: uint8(QU_PF)}},
 		})
 	}
 
 	// LB16: (CL | CP) SP* × NS
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(CL, CP), CL_CP_SP), Right: expand(NS, CJ), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(uint8(CL), uint8(CP)), CL_CP_SP), Right: expand(uint8(NS), uint8(CJ)), Break: false})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(CL, CP),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: CL_CP_SP}},
+		Entry: expand(uint8(CL), uint8(CP)),
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: CL_CP_SP}},
 	})
 	rules = append(rules, segmenter.ChainRule{
 		Entry: p(CL_CP_SP),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: CL_CP_SP}},
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: CL_CP_SP}},
 	})
 
 	// LB17: B2 SP* × B2
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(B2), B2_SP), Right: expand(B2), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(uint8(B2)), B2_SP), Right: expand(uint8(B2)), Break: false})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(B2),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: B2_SP}},
+		Entry: expand(uint8(B2)),
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: B2_SP}},
 	})
 	rules = append(rules, segmenter.ChainRule{
 		Entry: p(B2_SP),
-		Steps: []segmenter.ChainStep{{Props: p(SP), State: B2_SP}},
+		Steps: []segmenter.ChainStep{{Props: p(uint8(SP)), State: B2_SP}},
 	})
 
 	// LB18: SP ÷
-	rules = append(rules, segmenter.SimpleRule{Left: expand(SP), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(SP)), Break: true})
 	rules = append(rules, segmenter.SimpleRule{Left: p(B2_SP, CL_CP_SP), Break: true})
 
 	// LB19: × QU, QU ×
@@ -515,44 +515,44 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: quAll, Break: false})
 
 	// LB20: ÷ CB, CB ÷
-	rules = append(rules, segmenter.SimpleRule{Left: expand(CB), Break: true})
-	rules = append(rules, segmenter.SimpleRule{Right: expand(CB), Break: true})
-	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY), Right: expand(CB), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(CB)), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(uint8(CB)), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY), Right: expand(uint8(CB)), Break: true})
 	rules = append(rules, segmenter.SimpleRule{Left: p(CB_QU), Break: false})
 
 	// LB21: × BA, × HY, × NS, BB ×
 	rules = append(rules, segmenter.SimpleRule{Right: bahyns, Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: bahyns, Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(BB), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(BB)), Break: false})
 
 	// LB21a: HL (HY | BA) ×
 	rules = append(rules, segmenter.SimpleRule{Left: p(HL_HY), Break: false})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(HL),
-		Steps: []segmenter.ChainStep{{Props: expand(HY, BA), State: HL_HY}},
+		Entry: expand(uint8(HL)),
+		Steps: []segmenter.ChainStep{{Props: expand(uint8(HY), uint8(BA)), State: HL_HY}},
 	})
 
 	// LB21b: SY × HL
-	rules = append(rules, segmenter.SimpleRule{Left: expand(SY), Right: expand(HL), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(SY)), Right: expand(uint8(HL)), Break: false})
 
 	// LB22: × IN
-	rules = append(rules, segmenter.SimpleRule{Right: expand(IN), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: expand(IN), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Right: expand(uint8(IN)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI, AK_VI), Right: expand(uint8(IN)), Break: false})
 
 	// LB23: (AL | HL) × NU, NU × (AL | HL)
-	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: expand(NU), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(NU), Right: allAlphaTarget, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: expand(uint8(NU)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(NU)), Right: allAlphaTarget, Break: false})
 
 	// LB23a: PR × (ID | EB | EM), (ID | EB | EM) × PO
-	rules = append(rules, segmenter.SimpleRule{Left: prAll, Right: expand(ID, ID_ExtPict, EB, EM), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(ID, ID_ExtPict, EB, EM), Right: poAll, Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: prAll, Right: expand(uint8(ID), uint8(ID_ExtPict), uint8(EB), uint8(EM)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(ID), uint8(ID_ExtPict), uint8(EB), uint8(EM)), Right: poAll, Break: false})
 
 	// LB24: (PR | PO) × (AL | HL), (AL | HL) × (PR | PO)
 	rules = append(rules, segmenter.SimpleRule{Left: prpo, Right: allAlphaTarget, Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: prpo, Break: false})
 
 	// LB25: Numeric context (NU (SY|IS)* (CL|CP)? (PR|PO)?, PR|PO × OP? NU, HY × NU)
-	rules = append(rules, segmenter.SimpleRule{Left: expand(HY), Right: expand(NU), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(HY)), Right: expand(uint8(NU)), Break: false})
 
 	lb25Entry := append(prAll, poAll...)
 
@@ -561,35 +561,35 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 		Steps: []segmenter.ChainStep{{Props: opAll, State: NU_OP}},
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: lb25Entry, Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+		Entry: lb25Entry, Steps: []segmenter.ChainStep{{Props: expand(uint8(NU)), State: NU_Num}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: opAll, Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+		Entry: opAll, Steps: []segmenter.ChainStep{{Props: expand(uint8(NU)), State: NU_Num}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(HY), Steps: []segmenter.ChainStep{{Props: expand(NU), State: NU_Num}}, Interm: true,
+		Entry: expand(uint8(HY)), Steps: []segmenter.ChainStep{{Props: expand(uint8(NU)), State: NU_Num}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(NU, SY, IS), State: NU_Num}}, Interm: true,
+		Entry: expand(uint8(NU)), Steps: []segmenter.ChainStep{{Props: expand(uint8(NU), uint8(SY), uint8(IS)), State: NU_Num}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(CL), State: NU_Close_CL}}, Interm: true,
+		Entry: expand(uint8(NU)), Steps: []segmenter.ChainStep{{Props: expand(uint8(CL)), State: NU_Close_CL}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: expand(CP), State: NU_Close_CP}}, Interm: true,
+		Entry: expand(uint8(NU)), Steps: []segmenter.ChainStep{{Props: expand(uint8(CP)), State: NU_Close_CP}}, Interm: true,
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(NU), Steps: []segmenter.ChainStep{{Props: lb25Entry, State: NU_Post}}, Interm: true,
+		Entry: expand(uint8(NU)), Steps: []segmenter.ChainStep{{Props: lb25Entry, State: NU_Post}}, Interm: true,
 	})
 
 	nuCommonKeep := func(m map[uint8]uint8) {
 		for _, r := range mandatory {
 			m[r] = segmenter.Keep
 		}
-		for _, r := range p(SP, ZW) {
+		for _, r := range p(uint8(SP), uint8(ZW)) {
 			m[r] = segmenter.Keep
 		}
-		for _, r := range expand(WJ) {
+		for _, r := range expand(uint8(WJ)) {
 			m[r] = segmenter.Keep
 		}
 		for _, r := range clcpexissy {
@@ -604,7 +604,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 		States: p(NU_OP), WipeValue: segmenter.NoMatch,
 		Overrides: func() map[uint8]uint8 {
 			m := make(map[uint8]uint8)
-			for _, nu := range expand(NU) {
+			for _, nu := range expand(uint8(NU)) {
 				m[nu] = interm(NU_Num)
 			}
 			return m
@@ -615,7 +615,7 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 		Overrides: func() map[uint8]uint8 {
 			m := map[uint8]uint8{eot: segmenter.Break}
 			nuCommonKeep(m)
-			for _, r := range expand(IN) {
+			for _, r := range expand(uint8(IN)) {
 				m[r] = segmenter.Keep
 			}
 			for _, r := range bahyns {
@@ -624,22 +624,22 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 			for _, r := range allAlphaTarget {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(GL) {
+			for _, r := range expand(uint8(GL)) {
 				m[r] = segmenter.Keep
 			}
 			for _, r := range opAll {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(EX) {
+			for _, r := range expand(uint8(EX)) {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(NU, SY, IS) {
+			for _, r := range expand(uint8(NU), uint8(SY), uint8(IS)) {
 				m[r] = interm(NU_Num)
 			}
-			for _, r := range expand(CL) {
+			for _, r := range expand(uint8(CL)) {
 				m[r] = interm(NU_Close_CL)
 			}
-			for _, r := range expand(CP) {
+			for _, r := range expand(uint8(CP)) {
 				m[r] = interm(NU_Close_CP)
 			}
 			for _, r := range lb25Entry {
@@ -656,16 +656,16 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 				m[r] = interm(NU_Post)
 			}
 			nuCommonKeep(m)
-			for _, r := range expand(IN) {
+			for _, r := range expand(uint8(IN)) {
 				m[r] = segmenter.Keep
 			}
 			for _, r := range bahyns {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(GL) {
+			for _, r := range expand(uint8(GL)) {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(BB) {
+			for _, r := range expand(uint8(BB)) {
 				m[r] = segmenter.Keep
 			}
 			return m
@@ -682,19 +682,19 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 			for _, r := range allAlphaTarget {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(NU) {
+			for _, r := range expand(uint8(NU)) {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(IN) {
+			for _, r := range expand(uint8(IN)) {
 				m[r] = segmenter.Keep
 			}
 			for _, r := range bahyns {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(GL) {
+			for _, r := range expand(uint8(GL)) {
 				m[r] = segmenter.Keep
 			}
-			for _, r := range expand(BB) {
+			for _, r := range expand(uint8(BB)) {
 				m[r] = segmenter.Keep
 			}
 			return m
@@ -707,11 +707,11 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 			for _, r := range opAll {
 				m[r] = idx(NU_OP)
 			}
-			for _, r := range expand(NU) {
+			for _, r := range expand(uint8(NU)) {
 				m[r] = interm(NU_Num)
 			}
 			nuCommonKeep(m)
-			for _, r := range expand(HY) {
+			for _, r := range expand(uint8(HY)) {
 				m[r] = segmenter.Keep
 			}
 			return m
@@ -719,9 +719,9 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	})
 
 	// LB26: JL × (JL | JV | H2 | H3), (JV | H2) × (JV | JT), (JT | H3) × JT
-	rules = append(rules, segmenter.SimpleRule{Left: expand(JL), Right: expand(JL, JV, H2, H3), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(JV, H2), Right: expand(JV, JT), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(JT, H3), Right: expand(JT), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(JL)), Right: expand(uint8(JL), uint8(JV), uint8(H2), uint8(H3)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(JV), uint8(H2)), Right: expand(uint8(JV), uint8(JT)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(JT), uint8(H3)), Right: expand(uint8(JT)), Break: false})
 
 	// LB27: (JL | JV | JT | H2 | H3) × PO, PR × (JL | JV | JT | H2 | H3)
 	rules = append(rules, segmenter.SimpleRule{Left: hangul, Right: poAll, Break: false})
@@ -731,47 +731,47 @@ func buildRules(unicodeVersion string) []segmenter.Rule {
 	rules = append(rules, segmenter.SimpleRule{Left: allAlpha, Right: allAlphaTarget, Break: false})
 
 	// LB28a: AP × (AK | ◌ | AS), (AK | ◌ | AS) × (VF | VI), (AK | ◌ | AS) VI × (AK | ◌), (AK | ◌ | AS) × (AK | ◌ | AS) VF
-	rules = append(rules, segmenter.SimpleRule{Left: append(expand(AL_DC), AK_DC), Right: expand(AI, AL, HL, XX, SA), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(AP), Right: expand(AK, AL_DC, AS), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(AK, AL_DC, AS), Right: expand(VF), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Right: expand(AK, AL_DC), Break: false})
-	rules = append(rules, segmenter.SimpleRule{Left: p(AK_AK, AK_DC), Right: expand(VF), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: append(expand(uint8(AL_DC)), AK_DC), Right: expand(uint8(AI), uint8(AL), uint8(HL), uint8(XX), uint8(SA)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(AP)), Right: expand(uint8(AK), uint8(AL_DC), uint8(AS)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(AK), uint8(AL_DC), uint8(AS)), Right: expand(uint8(VF)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Right: expand(uint8(AK), uint8(AL_DC)), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: p(AK_AK, AK_DC), Right: expand(uint8(VF)), Break: false})
 	rules = append(rules, segmenter.SimpleRule{Left: p(AK_VI), Break: true})
 	rules = append(rules, segmenter.SimpleRule{Left: p(AK_DC), Break: true})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(AK, AL_DC, AS),
-		Steps: []segmenter.ChainStep{{Props: expand(VI), State: AK_VI}},
+		Entry: expand(uint8(AK), uint8(AL_DC), uint8(AS)),
+		Steps: []segmenter.ChainStep{{Props: expand(uint8(VI)), State: AK_VI}},
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(AK, AL_DC, AS),
-		Steps: []segmenter.ChainStep{{Props: expand(AK, AS), State: AK_AK}},
+		Entry: expand(uint8(AK), uint8(AL_DC), uint8(AS)),
+		Steps: []segmenter.ChainStep{{Props: expand(uint8(AK), uint8(AS)), State: AK_AK}},
 	})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(AL_DC),
-		Steps: []segmenter.ChainStep{{Props: expand(AL_DC), State: AK_DC}},
+		Entry: expand(uint8(AL_DC)),
+		Steps: []segmenter.ChainStep{{Props: expand(uint8(AL_DC)), State: AK_DC}},
 	})
 
 	// LB29: IS × (AL | HL)
-	rules = append(rules, segmenter.SimpleRule{Left: expand(IS), Right: expand(AI, AL, HL, SA, XX, AL_DC), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(IS)), Right: expand(uint8(AI), uint8(AL), uint8(HL), uint8(SA), uint8(XX), uint8(AL_DC)), Break: false})
 
 	// LB30: (AL | HL | NU) × OP_nonEA, CP_nonEA × (AL | HL | NU)
 	rules = append(rules, segmenter.SimpleRule{
-		Left:  append(append(allAlpha, expand(NU, AL_DC)...), AK_DC),
-		Right: expand(OP),
+		Left:  append(append(allAlpha, expand(uint8(NU), uint8(AL_DC))...), AK_DC),
+		Right: expand(uint8(OP)),
 		Break: false,
 	})
-	rules = append(rules, segmenter.SimpleRule{Left: expand(CP), Right: append(allAlphaTarget, expand(NU)...), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(CP)), Right: append(allAlphaTarget, expand(uint8(NU))...), Break: false})
 
 	// LB30a: sot (RI RI)* RI × RI, [^RI] (RI RI)* RI × RI
-	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: expand(RI), Break: true})
+	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Right: expand(uint8(RI)), Break: true})
 	rules = append(rules, segmenter.SimpleRule{Left: p(RI_RI), Break: true})
 	rules = append(rules, segmenter.ChainRule{
-		Entry: expand(RI),
-		Steps: []segmenter.ChainStep{{Props: expand(RI), State: RI_RI}},
+		Entry: expand(uint8(RI)),
+		Steps: []segmenter.ChainStep{{Props: expand(uint8(RI)), State: RI_RI}},
 	})
 
 	// LB30b: EB × EM, [\p{Extended_Pictographic}&\p{Cn}] × EM
-	rules = append(rules, segmenter.SimpleRule{Left: expand(EB, ID_ExtPict), Right: expand(EM), Break: false})
+	rules = append(rules, segmenter.SimpleRule{Left: expand(uint8(EB), uint8(ID_ExtPict)), Right: expand(uint8(EM)), Break: false})
 
 	// LB31: ALL ÷
 	rules = append(rules, segmenter.SimpleRule{Break: true})

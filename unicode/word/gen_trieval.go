@@ -6,36 +6,40 @@
 
 package main
 
+// Class is the word break property class.
+// Each rune has a single class.
+type Class uint8
+
 // Word break property indices.
 // The zero value is Other (the default for codepoints with no specific class).
 // These values are stored directly in the trie.
 
 // Base properties stored in the trie.
 const (
-	Other                        = iota // WB=Other
-	CR                                  // WB=CR
-	LF                                  // WB=LF
-	Newline                             // WB=Newline
-	Extend                              // WB=Extend
-	ZWJ                                 // WB=ZWJ
-	Regional_Indicator                  // WB=Regional_Indicator
-	Format                              // WB=Format
-	Katakana                            // WB=Katakana
-	Hebrew_Letter                       // WB=Hebrew_Letter
-	ALetter                             // WB=ALetter (excluding ExtPict)
-	Single_Quote                        // WB=Single_Quote
-	Double_Quote                        // WB=Double_Quote
-	MidNumLet                           // WB=MidNumLet
-	MidLetter                           // WB=MidLetter
-	MidNum                              // WB=MidNum
-	Numeric                             // WB=Numeric
-	ExtendNumLet                        // WB=ExtendNumLet
-	WSegSpace                           // WB=WSegSpace
-	Extended_Pictographic               // Extended_Pictographic (excluding ALetter)
-	ALetter_Extended_Pictographic       // ALetter AND Extended_Pictographic
-	SA                                  // Complex/dictionary characters
+	Other                        Class = iota // WB=Other
+	CR                                        // WB=CR
+	LF                                        // WB=LF
+	Newline                                   // WB=Newline
+	Extend                                    // WB=Extend
+	ZWJ                                       // WB=ZWJ
+	Regional_Indicator                        // WB=Regional_Indicator
+	Format                                    // WB=Format
+	Katakana                                  // WB=Katakana
+	Hebrew_Letter                             // WB=Hebrew_Letter
+	ALetter                                   // WB=ALetter (excluding ExtPict)
+	Single_Quote                              // WB=Single_Quote
+	Double_Quote                              // WB=Double_Quote
+	MidNumLet                                 // WB=MidNumLet
+	MidLetter                                 // WB=MidLetter
+	MidNum                                    // WB=MidNum
+	Numeric                                   // WB=Numeric
+	ExtendNumLet                              // WB=ExtendNumLet
+	WSegSpace                                 // WB=WSegSpace
+	Extended_Pictographic                     // Extended_Pictographic (excluding ALetter)
+	ALetter_Extended_Pictographic             // ALetter AND Extended_Pictographic
+	SA                                        // Complex/dictionary characters
 
-	lastBase = SA
+	lastBase = uint8(SA)
 )
 
 // WB4 absorption combined states. These track what base property

@@ -2,6 +2,10 @@
 
 package line
 
+// Class is the line break property class.
+// Each rune has a single class.
+type Class uint8
+
 // Line break property indices.
 // XX is the zero value: the trie returns 0 for codepoints with no entry,
 // which correctly maps to XX (resolved to AL by LB1).
@@ -15,62 +19,62 @@ package line
 // remap them at runtime. The default break rules treat AI identically to AL
 // and CJ identically to NS.
 const (
-	XX         = iota // LB=XX (Unknown / default, zero value)
-	AI                // LB=AI (Ambiguous; default rules mirror AL)
-	AK                // LB=AK (Aksara)
-	AL                // LB=AL (Alphabetic)
-	AL_DC             // LB=AL with dotted circle (U+25CC)
-	AP                // LB=AP (Aksara Pre-base)
-	AS                // LB=AS (Aksara Start)
-	B2                // LB=B2 (Break Opportunity Before and After)
-	BA                // LB=BA (Break After)
-	BB                // LB=BB (Break Before)
-	BK                // LB=BK (Mandatory Break)
-	CB                // LB=CB (Contingent Break)
-	CJ                // LB=CJ (Conditional Japanese Starter; default rules mirror NS)
-	CL                // LB=CL (Close Punctuation)
-	CM                // LB=CM (Combining Mark)
-	CP                // LB=CP (Close Parenthesis)
-	CR                // LB=CR (Carriage Return)
-	EB                // LB=EB (Emoji Base)
-	EM                // LB=EM (Emoji Modifier)
-	EX                // LB=EX (Exclamation/Interrogation)
-	GL                // LB=GL (Non-breaking / Glue)
-	H2                // LB=H2 (Hangul LV Syllable)
-	H3                // LB=H3 (Hangul LVT Syllable)
-	HL                // LB=HL (Hebrew Letter)
-	HY                // LB=HY (Hyphen)
-	ID                // LB=ID (Ideographic)
-	ID_ExtPict        // LB=ID with unassigned codepoints (GC=Cn + ExtPict)
-	IN                // LB=IN (Inseparable)
-	IS                // LB=IS (Infix Numeric Separator)
-	JL                // LB=JL (Hangul L Jamo)
-	JT                // LB=JT (Hangul T Jamo)
-	JV                // LB=JV (Hangul V Jamo)
-	LF                // LB=LF (Line Feed)
-	NL                // LB=NL (Next Line)
-	NS                // LB=NS (Nonstarter)
-	NU                // LB=NU (Numeric)
-	OP_EA             // LB=OP East Asian (Full/Half/Wide)
-	OP                // LB=OP non-East Asian
-	PO                // LB=PO (Postfix Numeric)
-	PO_EA             // LB=PO East Asian Width
-	PR                // LB=PR (Prefix Numeric)
-	PR_EA             // LB=PR East Asian Width
-	QU                // LB=QU (Quotation)
-	QU_PF             // LB=QU with GeneralCategory=Pf
-	QU_PI             // LB=QU with GeneralCategory=Pi
-	RI                // LB=RI (Regional Indicator)
-	SA                // LB=SA (Complex Context / South Asian)
-	SP                // LB=SP (Space)
-	SY                // LB=SY (Symbols Allowing Break After)
-	VF                // LB=VF (Virama Final)
-	VI                // LB=VI (Virama)
-	WJ                // LB=WJ (Word Joiner)
-	ZW                // LB=ZW (Zero Width Space)
-	ZWJ               // LB=ZWJ (U+200D)
+	XX         Class = iota // LB=XX (Unknown / default, zero value)
+	AI                      // LB=AI (Ambiguous; default rules mirror AL)
+	AK                      // LB=AK (Aksara)
+	AL                      // LB=AL (Alphabetic)
+	AL_DC                   // LB=AL with dotted circle (U+25CC)
+	AP                      // LB=AP (Aksara Pre-base)
+	AS                      // LB=AS (Aksara Start)
+	B2                      // LB=B2 (Break Opportunity Before and After)
+	BA                      // LB=BA (Break After)
+	BB                      // LB=BB (Break Before)
+	BK                      // LB=BK (Mandatory Break)
+	CB                      // LB=CB (Contingent Break)
+	CJ                      // LB=CJ (Conditional Japanese Starter; default rules mirror NS)
+	CL                      // LB=CL (Close Punctuation)
+	CM                      // LB=CM (Combining Mark)
+	CP                      // LB=CP (Close Parenthesis)
+	CR                      // LB=CR (Carriage Return)
+	EB                      // LB=EB (Emoji Base)
+	EM                      // LB=EM (Emoji Modifier)
+	EX                      // LB=EX (Exclamation/Interrogation)
+	GL                      // LB=GL (Non-breaking / Glue)
+	H2                      // LB=H2 (Hangul LV Syllable)
+	H3                      // LB=H3 (Hangul LVT Syllable)
+	HL                      // LB=HL (Hebrew Letter)
+	HY                      // LB=HY (Hyphen)
+	ID                      // LB=ID (Ideographic)
+	ID_ExtPict              // LB=ID with unassigned codepoints (GC=Cn + ExtPict)
+	IN                      // LB=IN (Inseparable)
+	IS                      // LB=IS (Infix Numeric Separator)
+	JL                      // LB=JL (Hangul L Jamo)
+	JT                      // LB=JT (Hangul T Jamo)
+	JV                      // LB=JV (Hangul V Jamo)
+	LF                      // LB=LF (Line Feed)
+	NL                      // LB=NL (Next Line)
+	NS                      // LB=NS (Nonstarter)
+	NU                      // LB=NU (Numeric)
+	OP_EA                   // LB=OP East Asian (Full/Half/Wide)
+	OP                      // LB=OP non-East Asian
+	PO                      // LB=PO (Postfix Numeric)
+	PO_EA                   // LB=PO East Asian Width
+	PR                      // LB=PR (Prefix Numeric)
+	PR_EA                   // LB=PR East Asian Width
+	QU                      // LB=QU (Quotation)
+	QU_PF                   // LB=QU with GeneralCategory=Pf
+	QU_PI                   // LB=QU with GeneralCategory=Pi
+	RI                      // LB=RI (Regional Indicator)
+	SA                      // LB=SA (Complex Context / South Asian)
+	SP                      // LB=SP (Space)
+	SY                      // LB=SY (Symbols Allowing Break After)
+	VF                      // LB=VF (Virama Final)
+	VI                      // LB=VI (Virama)
+	WJ                      // LB=WJ (Word Joiner)
+	ZW                      // LB=ZW (Zero Width Space)
+	ZWJ                     // LB=ZWJ (U+200D)
 
-	lastBaseProperty = ZWJ
+	lastBaseProperty = uint8(ZWJ)
 )
 
 // LB9 absorption states. When base property B sees CM, it enters B_XX

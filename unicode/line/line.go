@@ -144,31 +144,31 @@ func buildOverride(strictness Strictness, wb WordBreak) func(uint8, rune) uint8 
 
 	return func(prop uint8, r rune) uint8 {
 		if needStrictness {
-			if prop == CJ {
-				prop = ID
+			if prop == uint8(CJ) {
+				prop = uint8(ID)
 			}
 		}
 
 		if strictness == Loose {
 			switch prop {
-			case NS:
+			case uint8(NS):
 				if isLooseNS(r) {
-					prop = ID
+					prop = uint8(ID)
 				}
-			case IN:
-				prop = ID
+			case uint8(IN):
+				prop = uint8(ID)
 			}
 		}
 
 		switch wb {
 		case WordBreakAll:
-			if prop == AL || prop == AI || prop == SA {
-				prop = ID
+			if prop == uint8(AL) || prop == uint8(AI) || prop == uint8(SA) {
+				prop = uint8(ID)
 			}
 		case WordKeepAll:
-			if prop == ID || prop == ID_ExtPict || prop == CJ ||
-				prop == H2 || prop == H3 || prop == JL || prop == JV || prop == JT {
-				prop = AL
+			if prop == uint8(ID) || prop == uint8(ID_ExtPict) || prop == uint8(CJ) ||
+				prop == uint8(H2) || prop == uint8(H3) || prop == uint8(JL) || prop == uint8(JV) || prop == uint8(JT) {
+				prop = uint8(AL)
 			}
 		}
 

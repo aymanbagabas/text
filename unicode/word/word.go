@@ -74,7 +74,7 @@ type Options struct {
 func finnishOverride(prop uint8, r rune) uint8 {
 	switch r {
 	case ':', '\uFE55', '\uFF1A':
-		return Other
+		return uint8(Other)
 	}
 	return prop
 }
