@@ -7,7 +7,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"unicode"
 
@@ -84,7 +83,6 @@ func genTables() {
 	w := gen.NewCodeWriter()
 	defer w.WriteVersionedGoFile("tables.go", "grapheme")
 
-	fmt.Fprintf(w, "import %q\n\n", "golang.org/x/text/internal/segmenter")
 	gen.WriteUnicodeVersion(w)
 
 	t := triegen.NewTrie("grapheme")
@@ -101,7 +99,7 @@ func genTables() {
 
 	rules := buildRules()
 	bt := segmenter.Build(rules, uint8(stride), uint8(sot), uint8(eot), uint8(lastCP))
-	segmenter.WriteBreakTable(w, "ruleData", bt, "graphemeTrie", 0)
+	segmenter.WriteBreakTable(w, bt)
 }
 
 func buildRules() []segmenter.Rule {

@@ -244,7 +244,6 @@ func genTables() {
 	w := gen.NewCodeWriter()
 	defer w.WriteVersionedGoFile("tables.go", "line")
 
-	fmt.Fprintf(w, "import %q\n\n", "golang.org/x/text/internal/segmenter")
 	gen.WriteUnicodeVersion(w)
 
 	t := triegen.NewTrie("line")
@@ -261,7 +260,7 @@ func genTables() {
 
 	rules := buildRules(gen.UnicodeVersion())
 	bt := segmenter.Build(rules, stride, sot, eot, lastCP)
-	segmenter.WriteBreakTable(w, "ruleData", bt, "lineTrie", uint8(SA))
+	segmenter.WriteBreakTable(w, bt)
 }
 
 func p(v ...uint8) []uint8 { return v }
